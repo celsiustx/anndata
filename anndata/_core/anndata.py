@@ -5,6 +5,7 @@ import warnings
 import collections.abc as cabc
 from collections import OrderedDict
 from copy import deepcopy
+from dask import dataframe as dd
 from enum import Enum
 from functools import reduce
 from pathlib import Path
@@ -91,7 +92,8 @@ def _check_2d_shape(X):
 
 
 def _gen_dataframe(anno, length, index_names):
-    if isinstance(anno, pd.DataFrame):
+    #print(f'anno: {anno.columns}, {anno.index.dtype} {anno.index.name} {anno.index[:5]}')
+    if isinstance(anno, pd.DataFrame) or isinstance(anno, dd.DataFrame):
         anno = anno.copy()
         if not is_string_dtype(anno.index):
             logger.warning("Transforming to str index.")
@@ -269,6 +271,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         shape: Optional[Tuple[int, int]] = None,
         filename: Optional[PathLike] = None,
         filemode: Optional[Literal["r", "r+"]] = None,
+        fd = None,
         asview: bool = False,
         *,
         obsp: Optional[Union[np.ndarray, Mapping[str, Sequence[Any]]]] = None,
@@ -296,6 +299,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 varp=varp,
                 filename=filename,
                 filemode=filemode,
+                fd=fd,
             )
 
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
@@ -369,6 +373,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         shape=None,
         filename=None,
         filemode=None,
+        fd=None,
     ):
         # view attributes
         self._is_view = False
@@ -382,9 +387,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
         # init from file
         if filename is not None:
-            self.file = AnnDataFileManager(self, filename, filemode)
+            self.file = AnnDataFileManager(self, filename, filemode, fd=fd)
         else:
-            self.file = AnnDataFileManager(self, None)
+            self.file = AnnDataFileManager(self, fd=fd)
 
             # init from AnnData
             if isinstance(X, AnnData):
@@ -463,6 +468,10 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 else:
                     if self._n_vars != shape[1]:
                         raise ValueError("`shape` is inconsistent with `var`")
+
+        print(f'n_obs: {self._n_obs}')
+        print(f'obs: {obs} (file: {self.file.is_open})')
+        print(f'obs: {len(obs)}')
 
         # annotations
         self._obs = _gen_dataframe(
@@ -1780,9 +1789,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     obs_names_make_unique.__doc__ = utils.make_index_unique.__doc__
 
     def _check_uniqueness(self):
-        if not self.obs.index.is_unique:
+        if hasattr(self.obs.index, 'is_unique') and not self.obs.index.is_unique:
             utils.warn_names_duplicates("obs")
-        if not self.var.index.is_unique:
+        if hasattr(self.var.index, 'is_unique') and not self.var.index.is_unique:
             utils.warn_names_duplicates("var")
 
     def __contains__(self, key: Any):

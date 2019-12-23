@@ -100,7 +100,7 @@ def _to_fixed_length_strings(value: np.ndarray) -> np.ndarray:
     return value.astype(new_dtype)
 
 
-def _clean_uns(d: dict):
+def _clean_uns(d: dict, dask: bool = False):
     """Compat function for when categorical keys were stored in uns."""
     k_to_delete = []
     for k, v in d.get("uns", {}).items():
@@ -109,10 +109,17 @@ def _clean_uns(d: dict):
             if isinstance(v, (str, int)):  # fix categories with a single category
                 v = [v]
             for ann in ["obs", "var"]:
-                if k_stripped in d[ann]:
-                    d[ann][k_stripped] = pd.Categorical.from_codes(
-                        codes=d[ann][k_stripped].values, categories=v
-                    )
+                if k_stripped in d[ann].columns:
+                    if dask:
+                        d[ann][k_stripped] = \
+                            d[ann][k_stripped] \
+                                .astype('category') \
+                                .cat.set_categories(np.arange(len(v))) \
+                                .cat.rename_categories(v)
+                    else:
+                        d[ann][k_stripped] = pd.Categorical.from_codes(
+                            codes=d[ann][k_stripped].values, categories=v
+                        )
                     k_to_delete.append(k)
     for k in k_to_delete:
         del d["uns"][k]

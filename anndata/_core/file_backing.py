@@ -17,11 +17,14 @@ class AnnDataFileManager:
         adata: "anndata.AnnData",
         filename: Optional[PathLike] = None,
         filemode: Optional[Literal["r", "r+"]] = None,
+        fd = None,
     ):
         self._adata = adata
         self.filename = filename
         self._filemode = filemode
         self._file = None
+        self._fd = fd
+        print(f'_fd: {fd}')
         if filename:
             self.open()
 
@@ -67,11 +70,17 @@ class AnnDataFileManager:
             self._filemode = filemode
         if self.filename is None:
             raise ValueError("Cannot open backing file if backing not initialized.")
-        self._file = h5py.File(self.filename, self._filemode)
+
+        if self._fd:
+            self._file = self._fd
+        else:
+            self._file = h5py.File(self.filename, self._filemode)
+        print(f'file manager opened: {self._file}')
 
     def close(self):
         """Close the backing file, remember filename, do *not* change to memory mode."""
         if self._file is not None:
+            print('file manager closing')
             self._file.close()
 
     def _to_memory_mode(self):
