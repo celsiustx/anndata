@@ -171,6 +171,22 @@ def test_set_var(adata, subset_func):
     assert joblib.hash(adata) == init_hash
 
 
+def test_drop_obs_column():
+    adata = ad.AnnData(np.array(X_list), obs=obs_dict, dtype="int32")
+
+    subset = adata[:2]
+    assert subset.is_view
+    # returns a copy of obs
+    assert subset.obs.drop(columns=["oanno1"]).columns.tolist() == ["oanno2", "oanno3"]
+    assert subset.is_view
+    # would modify obs, so it should actualize subset and not modify adata
+    subset.obs.drop(columns=["oanno1"], inplace=True)
+    assert not subset.is_view
+    assert subset.obs.columns.tolist() == ["oanno2", "oanno3"]
+
+    assert adata.obs.columns.tolist() == ["oanno1", "oanno2", "oanno3"]
+
+
 def test_set_obsm(adata):
     init_hash = joblib.hash(adata)
 
@@ -347,6 +363,19 @@ def test_view_delattr(attr):
     assert not subset.is_view
     # Should now have same value as default
     assert_equal(getattr(subset, attr), getattr(empty, attr))
+
+
+@pytest.mark.parametrize(
+    "attr", ["obs", "var", "obsm", "varm", "obsp", "varp", "layers", "uns"]
+)
+def test_view_setattr_machinery(attr, subset_func, subset_func2):
+    # Tests that setting attributes on a view doesn't mess anything up too bad
+    adata = gen_adata((10, 10))
+    view = adata[subset_func(adata.obs_names), subset_func2(adata.var_names)]
+
+    actual = view.copy()
+    setattr(view, attr, getattr(actual, attr))
+    assert_equal(actual, view, exact=True)
 
 
 def test_layers_view():

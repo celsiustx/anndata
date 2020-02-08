@@ -1,8 +1,12 @@
+from typing import Union, Mapping, MutableMapping
+
 import numpy as np
 import pandas as pd
 
 
 # try importing zarr, dask, and zappy
+from packaging import version
+
 try:
     from zarr.core import Array as ZarrArray
 except ImportError:
@@ -50,12 +54,12 @@ except ImportError:
             pass
 
 
-def version(package):
+def pkg_version(package):
     try:
-        from importlib.metadata import version
+        from importlib.metadata import version as v
     except ImportError:
-        from importlib_metadata import version
-    return version(package)
+        from importlib_metadata import version as v
+    return version.parse(v(package))
 
 
 def _from_fixed_length_strings(value):
@@ -100,26 +104,35 @@ def _to_fixed_length_strings(value: np.ndarray) -> np.ndarray:
     return value.astype(new_dtype)
 
 
-def _clean_uns(d: dict, dask: bool = False):
-    """Compat function for when categorical keys were stored in uns."""
-    k_to_delete = []
-    for k, v in d.get("uns", {}).items():
-        if k.endswith("_categories"):
-            k_stripped = k.replace("_categories", "")
-            if isinstance(v, (str, int)):  # fix categories with a single category
-                v = [v]
-            for ann in ["obs", "var"]:
-                if k_stripped in d[ann].columns:
-                    if dask:
-                        d[ann][k_stripped] = \
-                            d[ann][k_stripped] \
-                                .astype('category') \
-                                .cat.set_categories(np.arange(len(v))) \
-                                .cat.rename_categories(v)
-                    else:
-                        d[ann][k_stripped] = pd.Categorical.from_codes(
-                            codes=d[ann][k_stripped].values, categories=v
-                        )
-                    k_to_delete.append(k)
-    for k in k_to_delete:
-        del d["uns"][k]
+def _clean_uns(d: Mapping[str, MutableMapping[str, Union[pd.Series, str, int]]], dask: bool = False):
+    """
+    Compat function for when categorical keys were stored in uns.
+    This used to be buggy because when storing categorical columns in obs and var with
+    the same column name, only one `<colname>_categories` is retained.
+    """
+    k_to_delete = set()
+    for cats_name, cats in d.get("uns", {}).items():
+        if not cats_name.endswith("_categories"):
+            continue
+        name = cats_name.replace("_categories", "")
+        # fix categories with a single category
+        if isinstance(cats, (str, int)):
+            cats = [cats]
+        for ann in ["obs", "var"]:
+            if name not in d[ann] and name not in d[ann].columns:
+                continue
+            if dask:
+                d[ann][name] = \
+                    d[ann][name] \
+                        .astype('category') \
+                        .cat.set_categories(np.arange(len(cats))) \
+                        .cat.rename_categories(cats)
+            else:
+                codes: np.ndarray = d[ann][name].values
+                # hack to maybe find the axis the categories were for
+                if not np.all(codes < len(cats)):
+                    continue
+                d[ann][name] = pd.Categorical.from_codes(codes, cats)
+            k_to_delete.add(cats_name)
+    for cats_name in k_to_delete:
+        del d["uns"][cats_name]

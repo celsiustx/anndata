@@ -82,14 +82,6 @@ def warn_names_duplicates(attr: str):
     )
 
 
-def warn_no_string_index(names: Sequence[Any]):
-    if not isinstance(names[0], str):
-        logger.warning(
-            f"AnnData expects string indices for some functionality, "
-            f"but your first two indices are: {names[:2]}. "
-        )
-
-
 def ensure_df_homogeneous(df: pd.DataFrame, name: str) -> np.ndarray:
     arr = df.to_numpy()
     if df.dtypes.nunique() != 1:

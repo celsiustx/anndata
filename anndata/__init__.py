@@ -1,4 +1,4 @@
-from ._core.anndata import AnnData
+from ._core.anndata import AnnData, ImplicitModificationWarning
 from ._core.raw import Raw
 from ._io import (
     read_h5ad,
@@ -71,6 +71,15 @@ Writing to other formats.
    AnnData.write_loom
    AnnData.write_zarr
 
+
+Errors and warnings
+-------------------
+
+.. autosummary::
+   :toctree: .
+
+   ImplicitModificationWarning
+
 """
 
 __author__ = ", ".join(
@@ -90,7 +99,7 @@ try:
     __version__ = get_version(root="..", relative_to=__file__)
     del get_version
 except (LookupError, ImportError):
-    from .compat import version
+    from .compat import pkg_version
 
-    __version__ = version(__name__)
-    del version
+    __version__ = str(pkg_version(__name__))
+    del pkg_version

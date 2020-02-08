@@ -114,6 +114,74 @@ def test_names():
     assert adata.var_names.tolist() == ["a", "b"]
 
 
+@pytest.mark.parametrize(
+    "names,after",
+    [
+        pytest.param(["a", "b"], None, id="list"),
+        pytest.param(
+            pd.Series(["AAD", "CCA"], name="barcodes"), "barcodes", id="Series-str"
+        ),
+        pytest.param(pd.Series(["x", "y"], name=0), None, id="Series-int"),
+    ],
+)
+@pytest.mark.parametrize("attr", ["obs_names", "var_names"])
+def test_setting_index_names(names, after, attr):
+    adata = adata_dense.copy()
+    assert getattr(adata, attr).name is None
+    setattr(adata, attr, names)
+    assert getattr(adata, attr).name == after
+    if hasattr(names, "name"):
+        assert names.name is not None
+
+    # Testing for views
+    new = adata[:, :]
+    assert new.is_view
+    setattr(new, attr, names)
+    assert_equal(new, adata, exact=True)
+    assert not new.is_view
+
+
+@pytest.mark.parametrize("attr", ["obs_names", "var_names"])
+def test_setting_index_names_error(attr):
+    orig = adata_sparse[:2, :2]
+    adata = adata_sparse[:2, :2]
+    assert getattr(adata, attr).name is None
+    with pytest.raises(ValueError, match=fr"AnnData expects \.{attr[:3]}\.index\.name"):
+        setattr(adata, attr, pd.Index(["x", "y"], name=0))
+    assert adata.is_view
+    assert getattr(adata, attr).tolist() != ["x", "y"]
+    assert getattr(adata, attr).tolist() == getattr(orig, attr).tolist()
+    assert_equal(orig, adata, exact=True)
+
+
+@pytest.mark.parametrize("dim", ["obs", "var"])
+def test_setting_dim_index(dim):
+    index_attr = f"{dim}_names"
+    mapping_attr = f"{dim}m"
+
+    orig = gen_adata((5, 5))
+    orig.raw = orig
+    curr = orig.copy()
+    view = orig[:, :]
+    new_idx = pd.Index(list("abcde"), name="letters")
+
+    setattr(curr, index_attr, new_idx)
+    pd.testing.assert_index_equal(getattr(curr, index_attr), new_idx)
+    pd.testing.assert_index_equal(getattr(curr, mapping_attr)["df"].index, new_idx)
+    pd.testing.assert_index_equal(curr.obs_names, curr.raw.obs_names)
+
+    # Testing view behaviour
+    setattr(view, index_attr, new_idx)
+    assert not view.is_view
+    pd.testing.assert_index_equal(getattr(view, index_attr), new_idx)
+    pd.testing.assert_index_equal(getattr(view, mapping_attr)["df"].index, new_idx)
+    with pytest.raises(AssertionError):
+        pd.testing.assert_index_equal(
+            getattr(view, index_attr), getattr(orig, index_attr)
+        )
+    assert_equal(view, curr, exact=True)
+
+
 def test_indices_dtypes():
     adata = AnnData(
         np.array([[1, 2, 3], [4, 5, 6]]),
@@ -235,6 +303,9 @@ def test_slicing_graphs():
         np.array([[1, 2], [3, 4], [5, 6]]),
         uns=dict(neighbors=dict(connectivities=sp.csr_matrix(np.ones((3, 3))))),
     )
+    # with pytest.warns(
+    #     DeprecationWarning, match=r".obs\['neighbors'\]\['connectivities'\] .*(3×3)"
+    # ):
     adata_sub = adata[[0, 1], :]
     assert adata_sub.uns["neighbors"]["connectivities"].shape[0] == 2
     assert adata.uns["neighbors"]["connectivities"].shape[0] == 3
@@ -375,18 +446,21 @@ def test_concatenate_dense():
         X1,
         dict(obs_names=["s1", "s2"], anno1=["c1", "c2"]),
         dict(var_names=["a", "b", "c"], annoA=[0, 1, 2]),
+        obsm=dict(X_1=X1, X_2=X2, X_3=X3),
         layers=dict(Xs=X1),
     )
     adata2 = AnnData(
         X2,
         dict(obs_names=["s3", "s4"], anno1=["c3", "c4"]),
         dict(var_names=["d", "c", "b"], annoA=[0, 1, 2]),
+        obsm=dict(X_1=X1, X_2=X2, X_3=X3),
         layers={"Xs": X2},
     )
     adata3 = AnnData(
         X3,
         dict(obs_names=["s1", "s2"], anno2=["d3", "d4"]),
         dict(var_names=["d", "c", "b"], annoB=[0, 1, 2]),
+        obsm=dict(X_1=X1, X_2=X2),
         layers=dict(Xs=X3),
     )
 
@@ -398,6 +472,10 @@ def test_concatenate_dense():
     assert adata.obs_keys() == ["anno1", "anno2", "batch"]
     assert adata.var_keys() == ["annoA-0", "annoA-1", "annoB-2"]
     assert adata.var.values.tolist() == [[1, 2, 2], [2, 1, 1]]
+    assert adata.obsm_keys() == ["X_1", "X_2"]
+    assert adata.obsm["X_1"].tolist() == np.concatenate([X1, X1, X1]).tolist()
+
+    # with batch_key and batch_categories
     adata = adata1.concatenate(adata2, adata3, batch_key="batch1")
     assert adata.obs_keys() == ["anno1", "anno2", "batch1"]
     adata = adata1.concatenate(adata2, adata3, batch_categories=["a1", "a2", "a3"])
