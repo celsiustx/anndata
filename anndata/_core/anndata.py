@@ -92,7 +92,6 @@ def _check_2d_shape(X):
 
 
 def _gen_dataframe(anno, length, index_names):
-    #print(f'anno: {anno.columns}, {anno.index.dtype} {anno.index.name} {anno.index[:5]}')
     if isinstance(anno, pd.DataFrame) or isinstance(anno, dd.DataFrame):
         anno = anno.copy()
         if not is_string_dtype(anno.index):
@@ -468,10 +467,6 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 else:
                     if self._n_vars != shape[1]:
                         raise ValueError("`shape` is inconsistent with `var`")
-
-        print(f'n_obs: {self._n_obs}')
-        print(f'obs: {obs} (file: {self.file.is_open})')
-        print(f'obs: {len(obs)}')
 
         # annotations
         self._obs = _gen_dataframe(

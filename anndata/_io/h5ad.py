@@ -311,7 +311,6 @@ def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"], dask:
     d = dict(filename=filename, filemode=mode)
 
     f = h5py.File(filename, mode)
-    print(f'read_h5ad_backed: opened file {f}')
 
     attributes = ["obsm", "varm", "obsp", "varp", "uns", "layers"]
     df_attributes = ["obs", "var"]
@@ -479,11 +478,12 @@ def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
     idx_key = group.attrs["_index"]
     if dask:
         from dask.dataframe import DataFrame
-        df = DataFrame(
-            {k: read_series(group[k]) for k in columns},
-            index=read_series(group[idx_key]),
-            columns=list(columns),
-        )
+        df = None  # TODO
+        # df = DataFrame(
+        #     {k: read_series(group[k]) for k in columns},
+        #     index=read_series(group[idx_key]),
+        #     columns=list(columns),
+        # )
     else:
         df = pd.DataFrame(
             {k: read_series(group[k]) for k in columns},

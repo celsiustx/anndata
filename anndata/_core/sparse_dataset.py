@@ -230,6 +230,7 @@ class SparseDataset:
 
     def __init__(self, group: h5py.Group):
         self.group = group
+        self.ndim = 2
 
     @property
     def dtype(self) -> np.dtype:

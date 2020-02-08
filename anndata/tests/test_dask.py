@@ -6,4 +6,11 @@ def test_dask():
         path,
         dask=True
     )
-    #print(ad.obs.head())
+    print(ad.obs.head())
+    from anndata._io.sql import write_sql
+    from sqlalchemy import create_engine
+    engine = create_engine('postgres:///sc')
+    write_sql(ad, 'test', engine, if_exists='replace')
+
+
+#def test_write_dask():

@@ -24,7 +24,6 @@ class AnnDataFileManager:
         self._filemode = filemode
         self._file = None
         self._fd = fd
-        print(f'_fd: {fd}')
         if filename:
             self.open()
 
@@ -75,12 +74,10 @@ class AnnDataFileManager:
             self._file = self._fd
         else:
             self._file = h5py.File(self.filename, self._filemode)
-        print(f'file manager opened: {self._file}')
 
     def close(self):
         """Close the backing file, remember filename, do *not* change to memory mode."""
         if self._file is not None:
-            print('file manager closing')
             self._file.close()
 
     def _to_memory_mode(self):
