@@ -119,15 +119,17 @@ def _clean_uns(d: Mapping[str, MutableMapping[str, Union[pd.Series, str, int]]],
         if isinstance(cats, (str, int)):
             cats = [cats]
         for ann in ["obs", "var"]:
-            if name not in d[ann] and name not in d[ann].columns:
-                continue
             if dask:
+                if name not in d[ann].columns:
+                    continue
                 d[ann][name] = \
                     d[ann][name] \
                         .astype('category') \
                         .cat.set_categories(np.arange(len(cats))) \
                         .cat.rename_categories(cats)
             else:
+                if name not in d[ann]:
+                    continue
                 codes: np.ndarray = d[ann][name].values
                 # hack to maybe find the axis the categories were for
                 if not np.all(codes < len(cats)):

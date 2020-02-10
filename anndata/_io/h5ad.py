@@ -479,7 +479,7 @@ def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
     idx_key = group.attrs["_index"]
     if dask:
         from dask.dataframe import DataFrame
-        df = None  # TODO
+        raise Exception('TODO')
         # df = DataFrame(
         #     {k: read_series(group[k]) for k in columns},
         #     index=read_series(group[idx_key]),

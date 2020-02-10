@@ -165,6 +165,12 @@ class backed_csc_matrix(BackedSparseMatrix, ss.csc_matrix):
             get_compressed_vectors(self, idxs), shape=(self.shape[0], len(idxs))
         )[row, :]
 
+    def __str__(self):
+        return ss.csc_matrix.__str__(self)
+
+    def __repr__(self):
+        return ss.csc_matrix.__repr__(self)
+
 
 FORMATS = [
     BackedFormat("csr", backed_csr_matrix, ss.csr_matrix),
