@@ -376,7 +376,7 @@ def read_h5ad(
         if mode is True:
             mode = "r+"
         assert mode in {"r", "r+"}
-        return read_h5ad_backed(filename, mode)
+        return read_h5ad_backed(filename, mode, dask=dask)
 
     if as_sparse_fmt not in (sparse.csr_matrix, sparse.csc_matrix):
         raise NotImplementedError(
@@ -479,12 +479,8 @@ def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
     idx_key = group.attrs["_index"]
     if dask:
         from dask.dataframe import DataFrame
-        raise Exception('TODO')
-        # df = DataFrame(
-        #     {k: read_series(group[k]) for k in columns},
-        #     index=read_series(group[idx_key]),
-        #     columns=list(columns),
-        # )
+        from .h5chunk import load_group
+        df = load_group(group=group)
     else:
         df = pd.DataFrame(
             {k: read_series(group[k]) for k in columns},
