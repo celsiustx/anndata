@@ -485,8 +485,8 @@ def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
     idx_key = group.attrs["_index"]
     if dask:
         from dask.dataframe import DataFrame
-        from .h5chunk import load_group
-        df = load_group(group=group)
+        from .h5chunk import load_dataframe
+        df = load_dataframe(group=group)
     else:
         df = pd.DataFrame(
             {k: read_series(group[k]) for k in columns},

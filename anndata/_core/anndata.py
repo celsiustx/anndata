@@ -605,9 +605,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 X = SparseDataset(X)
 
             if self._dask:
-                print(f'Wrapping X in dask Array')
-                from dask.array import from_array
-                X = from_array(X, asarray=False)
+                from anndata._io.h5chunk import load_tensor
+                X = load_tensor(X=X)
             # TODO: This should get replaced/ handled elsewhere
             # This is so that we can index into a backed dense dataset with
             # indices that aren’t strictly increasing

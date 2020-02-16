@@ -7,8 +7,13 @@ from dask.dataframe import DataFrame as DDF, read_sql_table
 from numpy import array, ndarray
 from pandas import DataFrame as DF, Series, concat
 from scipy.sparse import spmatrix
+from sqlalchemy import create_engine
 
-ddf_to_sql = delayed(DF.to_sql)
+def df_to_sql(*args, db_url, **kwargs):
+    return DF.to_sql(*args, con=create_engine(db_url), **kwargs)
+
+ddf_to_sql = delayed(df_to_sql)
+
 
 from anndata import AnnData
 from .h5chunk import Pos
@@ -27,9 +32,9 @@ def read_sql(table_name_prefix, engine):
     )
 
 
-def to_dataframe(arr, pos: Union[Tuple[int, ...], Pos] = None):
+def to_dataframe(arr, pos: Union[Tuple[Tuple[int,int], ...], Pos] = None):
     if pos is None:
-        pos = Pos.from_arr(arr, [0]*arr.ndim)
+        pos = Pos.from_arr(arr, tuple(zip([0]*arr.ndim, arr.shape)))
     elif isinstance(pos, tuple):
         pos = Pos.from_arr(arr, pos)
 
@@ -40,19 +45,19 @@ def to_dataframe(arr, pos: Union[Tuple[int, ...], Pos] = None):
 
     if isinstance(arr, spmatrix):
         coo = arr.tocoo()
-        (R, _) = coo.shape
+        (_, C) = coo.shape
 
-        idx_dtype = [ ('idx',IDX_DTYPE) ]
+        idx_dtype = [ ('idx',IDX_DTYPE) ]  # TODO: right-size integer index types?
         idxs_dtype = [
             (f'i{i}', IDX_DTYPE)
             for i in range(arr.ndim)
         ]
 
         if arr.dtype.fields:
-            def make_record(r, c, v): return tuple([R*r + c, r, c,] + list(v))
+            def make_record(r, c, v): return tuple([ C*r + c, r, c,] + list(v))
             values_dtype = arr.dtype.descr
         else:
-            def make_record(r, c, v): return (R*r + c, r, c, v)
+            def make_record(r, c, v): return ( C*r + c, r, c, v )
             values_dtype = [ ('v', arr.dtype.str) ]
 
         dtype = idx_dtype + idxs_dtype + values_dtype
@@ -70,10 +75,11 @@ def to_dataframe(arr, pos: Union[Tuple[int, ...], Pos] = None):
         assert isinstance(arr, ndarray), f'Unexpected type {type(arr)}: {arr}'
         if arr.ndim == 1:
             (coord,) = coords
+            assert len(arr) == (coord.end - coord.start), f'{len(arr)} != {coord.end} - {coord.start}'
             df = \
                 concat(
                     [
-                        Series(range(coord.offset, coord.offset + len(arr)), name='idx'),
+                        Series(range(coord.start, coord.end), name='idx'),
                         Series(arr,name='v')
                     ],
                     axis=1,
@@ -126,31 +132,38 @@ def write_sql(ad, table_name_prefix, engine, if_exists=None, dask=False):
     var = ad.var
     X = ad.X
 
-    print(f'Writing obs')
-    write_table(obs, f'{table_name_prefix}/obs', engine, if_exists=if_exists)
-    print(f'Writing var')
-    write_table(var, f'{table_name_prefix}/var', engine, if_exists=if_exists)
     print(f'Writing X')
     write_tensor(X, f'{table_name_prefix}/X', engine, if_exists=if_exists, dask=dask)
+    print(f'Writing obs')
+    write_df(obs, f'{table_name_prefix}/obs', engine, if_exists=if_exists)
+    print(f'Writing var')
+    write_df(var, f'{table_name_prefix}/var', engine, if_exists=if_exists)
 
 
-def write_table(df, table_name, engine, if_exists=None):
+def write_df(df, table_name, engine, if_exists=None):
     if isinstance(df, DF):
         df.to_sql(table_name, engine, if_exists=if_exists)
     elif isinstance(df, DDF):
         df = df.reset_index()
         df._meta.to_sql(table_name, engine, if_exists=if_exists)
+        db_url = engine.url
         res = [
-            ddf_to_sql(d, table_name, engine, if_exists='append')
+            ddf_to_sql(d, table_name, db_url=db_url, if_exists='append')
             for d in df.to_delayed()
         ]
         return compute(*res)
-    elif isinstance(df, Array):
-        arr = df
-        dtype = arr
-        meta = concat([ Series([], name=name, dtype=dt) for name, dt in dtype ], axis=1)
     else:
         raise Exception(f'Unrecognized DataFrame type {type(df)}:\n{df}')
+
+
+def to_sql(block, block_info, table_name, db_url):
+    print(f'block_info: {block_info}, block {type(block)}')
+    engine = create_engine(db_url)
+    offsets = block_info[0]['array-location']
+    shape = block_info[0]['shape']
+    df = to_dataframe(block, pos=Pos.from_offsets_shapes(offsets, shape))
+    df.to_sql(table_name, engine, if_exists='append')
+    return array(True).reshape((1,)*block.ndim)
 
 
 def write_tensor(t, table_name, engine, if_exists=None, dask=False):
@@ -174,16 +187,9 @@ def write_tensor(t, table_name, engine, if_exists=None, dask=False):
         meta = concat([ Series([], name=name, dtype=dt) for name, dt in dtype ], axis=1).set_index('idx')
         meta.to_sql(table_name, engine, if_exists=if_exists)
 
-        def to_sql(block, block_info):
-            print(f'block_info: {block_info}')
-            offsets = [ offset for offset, _ in block_info[0]['array-location'] ]
-            shape = block_info[0]['shape']
-            df = to_dataframe(block, pos=Pos.from_offsets_shapes(offsets, shape))
-            df.to_sql(table_name, engine, if_exists='append')
-            return array(True).reshape((1,)*block.ndim)
-
-        return t.map_blocks(to_sql, chunks=(1,)*t.ndim, dtype=bool).compute()
+        return t.map_blocks(to_sql, chunks=(1,)*t.ndim, dtype=bool, table_name=table_name, db_url=engine.url).compute()
     elif dask:
+        print(f'Wrapping tensor in dask: {t}')
         return write_tensor(from_array(t), table_name, engine, if_exists)
     else:
         df = to_dataframe(t)

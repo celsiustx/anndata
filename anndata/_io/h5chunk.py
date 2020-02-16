@@ -1,23 +1,32 @@
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple, Union, Callable
+from typing import Callable, List, Tuple, Union
 
-from dask.array import Array
+from dask.array import from_array
+from dask.array.core import normalize_chunks
 from dask.dataframe import from_delayed
 from dask.delayed import delayed
 from h5py import Dataset, File, Group
-from numpy import array, dtype, ndarray
+from numpy import array, dtype, cumprod
+from numpy import cumsum, empty, result_type, ix_
 from pandas import Categorical, DataFrame as DF
 from scipy.sparse import spmatrix
+
+from anndata._io.h5ad import SparseDataset
 
 
 @dataclass
 class Coord:
     idx: int
-    offset: int
-    shape: int
+    start: int
+    end: int
+    max: int
     stride: int
+
+    @property
+    def shape(self): return self.end - self.start
+
 
 @dataclass
 class Pos:
@@ -25,30 +34,41 @@ class Pos:
 
     @property
     def idx(self):
-        return sum([ coord.stride * coord.offset for coord in self.coords ])
+        return sum([ coord.stride * coord.start for coord in self.coords ])
 
     @staticmethod
-    def from_offset_shapes(offsets):
-        stride = 1
-        strides = [stride]
-        for i in range(len(offsets)-1, 0, -1):
-            stride *= offsets[i][1]
-            strides.append(stride)
-        strides = reversed(strides)
+    def from_offset_shapes(offset_maxs: List[Tuple[Tuple[int, int], int]]):
+        strides = list(
+            reversed(
+                cumprod(
+                    [1] + \
+                    list(
+                        reversed([
+                            max
+                            for _, max
+                            in offset_maxs[1:]
+                        ])
+                    )
+                )
+            )
+        )
+
         return Pos(
             tuple([
-                Coord(idx, offset, shape, stride)
-                for (idx, (offset, shape)), stride
-                in zip(enumerate(offsets), strides)
+                Coord(idx, start, end, max, stride)
+                for (idx, ((start, end), max)), stride
+                in zip(enumerate(offset_maxs), strides)
             ])
         )
 
     @staticmethod
-    def from_offsets_shapes(offsets, shapes):
-        return Pos.from_offset_shapes(list(zip(offsets, shapes)))
+    def from_offsets_shapes(offsets: Tuple[Tuple[int,int], ...], shape: Tuple[int, ...]):
+        assert len(offsets) == len(shape)
+        zipped = list(zip(offsets, shape))
+        return Pos.from_offset_shapes(zipped)
 
     @staticmethod
-    def from_arr(arr, offsets):
+    def from_arr(arr, offsets: Tuple[Tuple[int,int], ...]):
         return Pos.from_offsets_shapes(offsets, arr.shape)
 
 
@@ -64,27 +84,30 @@ class H5Chunk:
     pos: Pos
     to_array: Callable[[Union[Dataset,Group]], spmatrix] = None
 
-    def __init__(self):
-        assert self.ndim == len(self.pos)
+    # def __init__(self):
+    #     assert self.ndim == len(self.coords)
 
     @property
     def shape(self):
-        return tuple( coord.shape for coord in self.pos )
+        return tuple( coord.shape for coord in self.coords )
 
     @property
-    def offset(self):
-        return tuple( coord.offset for coord in self.pos )
+    def start(self):
+        return tuple( coord.start for coord in self.coords )
 
     @property
     def idx(self):
-        return tuple( coord.idx for coord in self.pos )
+        return tuple( coord.idx for coord in self.coords )
 
     @property
     def slice(self):
-        return tuple( slice(coord.offset, coord.shape) for coord in self.pos )
+        return tuple( slice(coord.start, coord.end) for coord in self.coords )
+
+    @property
+    def coords(self): return self.pos.coords
 
     def arr(self):
-        print(f'Opening {self.file}: {self.idx} ({self.offset} + {self.shape})')
+        print(f'Opening {self.file}: {self.idx} ({self.slice})')
         with File(self.file, 'r') as f:
             arr = f[self.path]
 
@@ -123,7 +146,7 @@ def get_slice(path, name, start, end):
             pass
 
 
-def load_group(*, group=None, path=None, name=None, chunk_size=2**20):
+def load_dataframe(*, group=None, path=None, name=None, chunk_size=2 ** 20):
     if group:
         ctx = nullcontext()
         path = group.file.filename
@@ -134,7 +157,7 @@ def load_group(*, group=None, path=None, name=None, chunk_size=2**20):
 
     with ctx:
         cols = list(group.attrs['column-order'])
-        idx_key = group.attrs["_index"]
+        idx_key = group.attrs["_index"]  # TODO: use this / set index col correctly?
         itemsize = sum([ group[k].dtype.itemsize for k in cols ])
         [ (size,) ] = set([ group[k].shape for k in cols ])
         n_bytes = itemsize * size
@@ -150,3 +173,107 @@ def load_group(*, group=None, path=None, name=None, chunk_size=2**20):
     ddf = from_delayed(chunks)
     return ddf
 
+
+def cartesian_product(*arrays):
+    la = len(arrays)
+    dtype = result_type(*arrays)
+    arr = empty([len(a) for a in arrays] + [la], dtype=dtype)
+    for i, a in enumerate(ix_(*arrays)):
+        arr[..., i] = a
+    return arr.reshape(-1, la)
+
+
+def make_chunk(ranges, block_info, shape, record_dtype, range_dtype, ndim, path, _name):
+    block_info = block_info[0]
+    block_idxs = block_info['array-location']
+    rank = len(block_idxs)
+    arr = array(ranges)
+    arr.dtype = range_dtype
+    arr = arr.reshape((rank,))
+    strides = list(reversed(cumprod([1] + list(reversed(shape[1:])))))
+    pos = Pos(tuple([
+        Coord(
+            block_idx,
+            start, end,
+            shape[idx],
+            stride,
+        )
+        for idx, (block_idx, (start, end), stride)
+        in enumerate(zip(block_idxs, arr, strides))
+    ]))
+    return array(
+        H5Chunk(
+            path,
+            _name,
+            record_dtype,
+            ndim,
+            pos,
+            to_array=lambda group: SparseDataset(group).to_backed()
+        )
+    ) \
+    .reshape((1,)*rank)
+
+
+def to_arr(c, rank): return c[(0,)*rank].arr()
+
+
+def load_tensor(*, X=None, path=None, name=None, chunk_size=2 ** 20, to_array=None):
+    if X:
+        ctx = nullcontext()
+        path = X.file.filename
+        name = X.name
+    else:
+        ctx = File(path, 'r')
+        X = ctx[name]
+
+    print(f'Loading HDF5 tensor: {path}:{name}: {X}')
+
+    with ctx:
+        chunks = normalize_chunks('auto', X.shape, dtype = X.dtype)
+        rank = len(chunks)
+        chunk_ends = [ cumsum(chunk) for chunk in chunks ]
+        range_dtype = [('start','<i8'),('end','<i8')]
+        chunk_ranges = \
+            [
+                array(
+                    list(
+                        zip(
+                            [0] + chunk_dim_ends[:-1].tolist(),
+                            chunk_dim_ends,
+                        )
+                    ),
+                    dtype=range_dtype
+                )
+                for chunk_dim_ends in chunk_ends
+            ]
+
+        cp = cartesian_product(*chunk_ranges)
+
+        full_dtype = [
+            field
+            for i in range(rank)
+            for field in [
+                (f'start_{i}','<i8'),
+                (f'end_{i}','<i8')
+            ]
+        ]
+        cp.dtype = full_dtype
+        cp = cp.reshape([len(c) for c in chunks])
+
+        da = from_array(cp, chunks=(1,)*rank)
+
+        h5chunks = da.map_blocks(
+            make_chunk,
+            chunks=(1,)*rank,
+            dtype=H5Chunk,
+            shape=X.shape,
+            record_dtype=X.dtype,
+            range_dtype=range_dtype,
+            ndim=X.ndim,
+            path=path,
+            _name='X',
+        )
+
+        arr = h5chunks.map_blocks(to_arr, chunks=chunks, dtype=X.dtype, rank=rank)
+
+        return arr
