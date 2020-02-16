@@ -1,44 +1,104 @@
 from contextlib import nullcontext
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Tuple, Union, Callable
+
+from dask.array import Array
 from dask.dataframe import from_delayed
 from dask.delayed import delayed
-from dataclasses import dataclass
-from numpy import unique
+from h5py import Dataset, File, Group
+from numpy import array, dtype, ndarray
 from pandas import Categorical, DataFrame as DF
-from pathlib import Path
-from typing import Tuple
+from scipy.sparse import spmatrix
 
-from anndata._core.sparse_dataset import SparseDataset
-from h5py import File, Group
-from numpy import array, dtype
+
+@dataclass
+class Coord:
+    idx: int
+    offset: int
+    shape: int
+    stride: int
+
+@dataclass
+class Pos:
+    coords: Tuple[Coord, ...]
+
+    @property
+    def idx(self):
+        return sum([ coord.stride * coord.offset for coord in self.coords ])
+
+    @staticmethod
+    def from_offset_shapes(offsets):
+        stride = 1
+        strides = [stride]
+        for i in range(len(offsets)-1, 0, -1):
+            stride *= offsets[i][1]
+            strides.append(stride)
+        strides = reversed(strides)
+        return Pos(
+            tuple([
+                Coord(idx, offset, shape, stride)
+                for (idx, (offset, shape)), stride
+                in zip(enumerate(offsets), strides)
+            ])
+        )
+
+    @staticmethod
+    def from_offsets_shapes(offsets, shapes):
+        return Pos.from_offset_shapes(list(zip(offsets, shapes)))
+
+    @staticmethod
+    def from_arr(arr, offsets):
+        return Pos.from_offsets_shapes(offsets, arr.shape)
 
 
 @dataclass
 class H5Chunk:
+    '''Lazy pointer to a chunk of an HDF5 dataset
+
+    Opens the file and extracts the specified range'''
     file: Path
     path: str
     dtype: dtype
-    idx: Tuple[int,int]
-    chunk: Tuple[Tuple[int,int],Tuple[int,int]]
+    ndim: int
+    pos: Pos
+    to_array: Callable[[Union[Dataset,Group]], spmatrix] = None
 
-    def nnz(self):
-        print(f'Opening {self.file}: {self.idx} ({self.chunk})')
+    def __init__(self):
+        assert self.ndim == len(self.pos)
+
+    @property
+    def shape(self):
+        return tuple( coord.shape for coord in self.pos )
+
+    @property
+    def offset(self):
+        return tuple( coord.offset for coord in self.pos )
+
+    @property
+    def idx(self):
+        return tuple( coord.idx for coord in self.pos )
+
+    @property
+    def slice(self):
+        return tuple( slice(coord.offset, coord.shape) for coord in self.pos )
+
+    def arr(self):
+        print(f'Opening {self.file}: {self.idx} ({self.offset} + {self.shape})')
         with File(self.file, 'r') as f:
-            group = f[self.path]
-            assert isinstance(group, Group)
-            dataset = SparseDataset(group)
-            ((r,R),(c,C)) = self.chunk
-            coo = dataset[r:R,c:C].tocoo()
-            record_dtype = [
-                ('r','i4'),
-                ('c','i4'),
-                ('v',self.dtype),
-            ]
-            arr = array(
-                list(zip(r + coo.row, coo.col, coo.data)),
-                dtype=record_dtype,
-            )
-            print(f'Closing {self.file}: {self.idx} ({self.chunk})')
-            return arr
+            arr = f[self.path]
+
+            # Verify to_array exists if the HDF5 entry is a Group (and thus requires converting
+            if isinstance(arr, Group):
+                if not self.to_array:
+                    raise Exception(f'Missing Group->spmatrix converter for {self.file}:{self.path}')
+
+            if self.to_array:
+                arr = self.to_array(arr)
+
+            chunk = arr[self.slice]
+
+            return chunk
 
 
 def get_slice(path, name, start, end):
@@ -74,6 +134,7 @@ def load_group(*, group=None, path=None, name=None, chunk_size=2**20):
 
     with ctx:
         cols = list(group.attrs['column-order'])
+        idx_key = group.attrs["_index"]
         itemsize = sum([ group[k].dtype.itemsize for k in cols ])
         [ (size,) ] = set([ group[k].shape for k in cols ])
         n_bytes = itemsize * size

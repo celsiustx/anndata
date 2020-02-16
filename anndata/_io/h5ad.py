@@ -334,6 +334,9 @@ def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"], dask:
         raise ValueError()
 
     _clean_uns(d, dask)
+    d['dask'] = dask
+
+    print(f'Calling ctor: {list(d.keys())}')
 
     return AnnData(**d)
 
@@ -461,6 +464,7 @@ def _read_raw(
 @report_read_key_on_error
 def read_dataframe_legacy(dataset, dask: bool = False) -> pd.DataFrame:
     """Read pre-anndata 0.7 dataframes."""
+    print(f'read_dataframe_legacy: {dataset} (dask {dask}')
     if dask:
         from dask.dataframe import from_array
         df = from_array(dataset)
@@ -475,6 +479,8 @@ def read_dataframe_legacy(dataset, dask: bool = False) -> pd.DataFrame:
 def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
     if not isinstance(group, h5py.Group):
         return read_dataframe_legacy(group, dask)
+
+    print(f'read_dataframe (new): {group} (dask {dask})')
     columns = list(group.attrs["column-order"])
     idx_key = group.attrs["_index"]
     if dask:

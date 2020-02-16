@@ -297,6 +297,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         fd = None,
         asview: bool = False,
         *,
+        dask: bool = False,
         obsp: Optional[Union[np.ndarray, Mapping[str, Sequence[Any]]]] = None,
         varp: Optional[Union[np.ndarray, Mapping[str, Sequence[Any]]]] = None,
         oidx: Index1D = None,
@@ -323,6 +324,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 filename=filename,
                 filemode=filemode,
                 fd=fd,
+                dask=dask,
             )
 
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
@@ -397,12 +399,14 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         filename=None,
         filemode=None,
         fd=None,
+        dask=False,
     ):
         # view attributes
         self._is_view = False
         self._adata_ref = None
         self._oidx = None
         self._vidx = None
+        self._dask = dask
 
         # ----------------------------------------------------------------------
         # various ways of initializing the data
@@ -478,6 +482,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             self._X = X
             self._n_obs, self._n_vars = self._X.shape
         else:
+            print(f'_init_as_actual: X is None…')
             self._X = None
             self._n_obs = len([] if obs is None else obs)
             self._n_vars = len([] if var is None else var)
@@ -555,9 +560,19 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             "obsp",
             "varp",
         ]:
-            keys = getattr(self, attr).keys()
-            if len(keys) > 0:
-                descr += f"\n    {attr}: {str(list(keys))[1:-1]}"
+            obj = getattr(self, attr)
+            if hasattr(obj, 'keys'):
+                keys = getattr(self, attr).keys()
+                if len(keys) > 0:
+                    descr += f"\n    {attr}: {str(list(keys))[1:-1]}"
+            else:
+                from dask.dataframe import DataFrame
+                if isinstance(obj, DataFrame):
+                    descr += f"\n    {attr}: {str(obj.columns.tolist())[1:-1]}"
+                else:
+                    from sys import stderr
+                    stderr.write(f'Unknown attr type {type(obj)}: {obj}\n')
+
         return descr
 
     def __repr__(self) -> str:
@@ -582,11 +597,17 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     def X(self) -> Optional[Union[np.ndarray, sparse.spmatrix, ArrayView]]:
         """Data matrix of shape :attr:`n_obs` × :attr:`n_vars`."""
         if self.isbacked:
+            print(f'lazy compute X, isbacked…')
             if not self.file.is_open:
                 self.file.open()
             X = self.file["X"]
             if isinstance(X, h5py.Group):
                 X = SparseDataset(X)
+
+            if self._dask:
+                print(f'Wrapping X in dask Array')
+                from dask.array import from_array
+                X = from_array(X, asarray=False)
             # TODO: This should get replaced/ handled elsewhere
             # This is so that we can index into a backed dense dataset with
             # indices that aren’t strictly increasing

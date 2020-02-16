@@ -1,6 +1,22 @@
 
+from anndata._io.register import register_numerics
+from numpy import array
+
 def test_dask():
     path = '/Users/ryan/c/celsius/notebooks/data/Fib.imputed.1k.h5ad'
+    distributed = False
+    if distributed:
+        from dask.distributed import Client
+        client = Client()
+        print(f'client: {client}')
+
+        from distributed import Worker, WorkerPlugin
+        class MyPlugin(WorkerPlugin):
+            def setup(self, worker: Worker):
+                register_numerics()
+                print(f'worker setup: {worker}')
+
+        client.register_worker_plugin(MyPlugin())
     from anndata import read_h5ad
     ad = read_h5ad(path, backed=True, dask=True)
     print(ad.obs.head())
@@ -11,3 +27,10 @@ def test_dask():
 
 
 #def test_write_dask():
+
+from anndata._io.h5chunk import Pos, Coord
+def test_pos():
+    arr = array([ int(str(i)*2) for i in range(100) ])
+    pos = Pos.from_arr(arr, [0]*arr.ndim)
+    coords = pos.coords
+    assert coords == (Coord(0, 0, 100, 1),)
