@@ -107,7 +107,7 @@ class H5Chunk:
     def coords(self): return self.pos.coords
 
     def arr(self):
-        print(f'Opening {self.file}: {self.idx} ({self.slice})')
+        print(f'Opening {self.file} ({self.path}): {self.idx} ({self.slice})')
         with File(self.file, 'r') as f:
             arr = f[self.path]
 
@@ -127,9 +127,11 @@ class H5Chunk:
 def get_slice(path, name, start, end):
     '''Load rows [start,end) from HDF5 file `path` (group `name`) into a DataFrame'''
     with File(path, 'r') as f:
-        group = f[name]
-        attrs = group.attrs
-        if 'column-order' in attrs:
+        obj = f[name]
+        if isinstance(obj, Group):
+            group = obj
+            attrs = group.attrs
+            assert 'column-order' in attrs
             columns = list(attrs['column-order'])
             def get_series(k):
                 v = group[k]
@@ -143,23 +145,34 @@ def get_slice(path, name, start, end):
 
             return DF({ k: get_series(k) for k in columns })
         else:
-            pass
+            dataset = obj
+            return DF(dataset[start:end])
 
 
-def load_dataframe(*, group=None, path=None, name=None, chunk_size=2 ** 20):
-    if group:
+def load_dataframe(*, dataset=None, group=None, path=None, name=None, chunk_size=2 ** 20):
+    obj = dataset or group
+    if obj:
         ctx = nullcontext()
-        path = group.file.filename
-        name = group.name
+        path = obj.file.filename
+        name = obj.name
     else:
         ctx = File(path, 'r')
-        group = ctx[name]
+        obj = ctx[name]
+        if isinstance(obj, Group):
+            group = obj
+        else:
+            dataset = obj
 
     with ctx:
-        cols = list(group.attrs['column-order'])
-        idx_key = group.attrs["_index"]  # TODO: use this / set index col correctly?
-        itemsize = sum([ group[k].dtype.itemsize for k in cols ])
-        [ (size,) ] = set([ group[k].shape for k in cols ])
+        if group:
+            cols = list(group.attrs['column-order'])
+            #idx_key = group.attrs["_index"]  # TODO: use this / set index col correctly?
+            itemsize = sum([ group[k].dtype.itemsize for k in cols ])
+            [ (size,) ] = set([ group[k].shape for k in cols ])
+        else:
+            itemsize = dataset.dtype.itemsize
+            (size,) = dataset.shape
+
         n_bytes = itemsize * size
         n_chunks = (n_bytes + chunk_size - 1) // chunk_size
         chunk_starts = [ (i * size // n_chunks) for i in range(n_chunks) ]
@@ -208,7 +221,7 @@ def make_chunk(ranges, block_info, shape, record_dtype, range_dtype, ndim, path,
             record_dtype,
             ndim,
             pos,
-            to_array=lambda group: SparseDataset(group).to_backed()
+            to_array=lambda group: SparseDataset(group).to_backed() if isinstance(group, Group) else group
         )
     ) \
     .reshape((1,)*rank)

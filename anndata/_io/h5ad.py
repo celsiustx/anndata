@@ -464,10 +464,10 @@ def _read_raw(
 @report_read_key_on_error
 def read_dataframe_legacy(dataset, dask: bool = False) -> pd.DataFrame:
     """Read pre-anndata 0.7 dataframes."""
-    print(f'read_dataframe_legacy: {dataset} (dask {dask}')
+    print(f'read_dataframe_legacy: {dataset} (dask {dask})')
     if dask:
-        from dask.dataframe import from_array
-        df = from_array(dataset)
+        from .h5chunk import load_dataframe
+        df = load_dataframe(dataset=dataset)
         df = df.set_index(df.columns[0])
     else:
         df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))

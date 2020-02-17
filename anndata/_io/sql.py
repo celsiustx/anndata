@@ -101,7 +101,7 @@ def to_dataframe(arr, pos: Union[Tuple[Tuple[int,int], ...], Pos] = None):
                 to_coo(
                     idx + i*coord.stride,
                     coords,
-                    idxs + [ coord.offset + i ],
+                    idxs + [ coord.start + i ],
                     row,
                 )
                 for i, row in enumerate(arr)

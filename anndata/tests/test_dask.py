@@ -3,7 +3,7 @@ from anndata._io.register import register_numerics
 from numpy import array
 
 def test_dask():
-    path = '/Users/ryan/c/celsius/notebooks/data/Fib.imputed.1k.h5ad'
+    path = '/Users/ryan/c/celsius/notebooks/data/Fib.imputed.1k.legacy.h5ad'
     distributed = True
     if distributed:
         from dask.distributed import Client
@@ -23,7 +23,7 @@ def test_dask():
     from anndata._io.sql import write_sql
     from sqlalchemy import create_engine
     engine = create_engine('postgres:///sc')
-    write_sql(ad, 'test_dask', engine, if_exists='replace', dask=True)
+    write_sql(ad, 'test_dask_legacy', engine, if_exists='replace', dask=True)
 
 
 from anndata._io.h5chunk import Pos, Coord
