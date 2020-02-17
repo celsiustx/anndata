@@ -21,9 +21,8 @@ def test_dask():
     ad = read_h5ad(path, backed='r', dask=True)
     print(ad.obs.head())
     from anndata._io.sql import write_sql
-    from sqlalchemy import create_engine
-    engine = create_engine('postgres:///sc')
-    write_sql(ad, 'test_dask_legacy', engine, if_exists='replace', dask=True)
+    db_url = 'postgres:///sc'
+    write_sql(ad, 'test_dask_legacy', db_url, if_exists='replace', dask=True)
 
 
 from anndata._io.h5chunk import Pos, Coord

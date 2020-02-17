@@ -36,7 +36,24 @@ class Pos:
         return sum([ coord.stride * coord.start for coord in self.coords ])
 
     @staticmethod
-    def from_offset_shapes(offset_maxs: List[Tuple[Tuple[int, int], int]]):
+    def whole_array(arr):
+        shape = arr.shape
+        rank = len(shape)
+        return Pos.build(
+            (0,) * rank,
+            [ (0, max) for max in shape ],
+            shape,
+        )
+
+    @staticmethod
+    def from_block_info(block_info):
+        chunk_idxs = block_info['chunk-location']
+        chunk_offsets = block_info['array-location']
+        dim_maxs = block_info['shape']
+        return Pos.build(chunk_idxs, chunk_offsets, dim_maxs)
+
+    @staticmethod
+    def build(chunk_idxs, chunk_offsets, dim_maxs):
         strides = list(
             reversed(
                 cumprod(
@@ -44,31 +61,23 @@ class Pos:
                     list(
                         reversed([
                             max
-                            for _, max
-                            in offset_maxs[1:]
+                            for max
+                            in dim_maxs
                         ])
                     )
                 )
             )
         )
-
-        return Pos(
-            tuple([
-                Coord(idx, start, end, max, stride)
-                for (idx, ((start, end), max)), stride
-                in zip(enumerate(offset_maxs), strides)
-            ])
-        )
-
-    @staticmethod
-    def from_offsets_shapes(offsets: Tuple[Tuple[int,int], ...], shape: Tuple[int, ...]):
-        assert len(offsets) == len(shape)
-        zipped = list(zip(offsets, shape))
-        return Pos.from_offset_shapes(zipped)
-
-    @staticmethod
-    def from_arr(arr, offsets: Tuple[Tuple[int,int], ...]):
-        return Pos.from_offsets_shapes(offsets, arr.shape)
+        return Pos(tuple([
+            Coord(chunk_idx, start, end, max, stride)
+            for chunk_idx, (start, end), max, stride
+            in zip(
+                chunk_idxs,
+                chunk_offsets,
+                dim_maxs,
+                strides,
+            )
+        ]))
 
 
 @dataclass
