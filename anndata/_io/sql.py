@@ -9,6 +9,7 @@ from pandas import DataFrame as DF, Series, concat
 from scipy.sparse import spmatrix
 from sqlalchemy import create_engine
 
+
 def df_to_sql(*args, db_url, **kwargs):
     return DF.to_sql(*args, con=create_engine(db_url), **kwargs)
 
@@ -80,7 +81,7 @@ def to_dataframe(arr, pos: Union[Tuple[Tuple[int,int], ...], Pos] = None):
                 concat(
                     [
                         Series(range(coord.start, coord.end), name='idx'),
-                        Series(arr,name='v')
+                        Series(arr, name='v')
                     ],
                     axis=1,
                 ) \

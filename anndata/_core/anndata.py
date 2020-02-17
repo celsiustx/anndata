@@ -607,6 +607,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             if self._dask:
                 from anndata._io.h5chunk import load_tensor
                 X = load_tensor(X=X)
+
             # TODO: This should get replaced/ handled elsewhere
             # This is so that we can index into a backed dense dataset with
             # indices that aren’t strictly increasing

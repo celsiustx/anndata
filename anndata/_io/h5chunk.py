@@ -8,8 +8,7 @@ from dask.array.core import normalize_chunks
 from dask.dataframe import from_delayed
 from dask.delayed import delayed
 from h5py import Dataset, File, Group
-from numpy import array, dtype, cumprod
-from numpy import cumsum, empty, result_type, ix_
+from numpy import array, dtype, cumprod, cumsum, empty, result_type, ix_
 from pandas import Categorical, DataFrame as DF
 from scipy.sparse import spmatrix
 
@@ -110,6 +109,7 @@ class H5Chunk:
         print(f'Opening {self.file} ({self.path}): {self.idx} ({self.slice})')
         with File(self.file, 'r') as f:
             arr = f[self.path]
+            attrs = arr.attrs
 
             # Verify to_array exists if the HDF5 entry is a Group (and thus requires converting
             if isinstance(arr, Group):
@@ -120,6 +120,12 @@ class H5Chunk:
                 arr = self.to_array(arr)
 
             chunk = arr[self.slice]
+            if 'sparse_format' in attrs:
+                sparse_format = attrs['sparse_format']
+                from anndata._core.sparse_dataset import get_memory_class
+                mtx_class = get_memory_class(sparse_format)
+                print(f'Converting chunk to sparse format: {sparse_format}')
+                chunk = mtx_class(chunk)
 
             return chunk
 
@@ -196,7 +202,14 @@ def cartesian_product(*arrays):
     return arr.reshape(-1, la)
 
 
-def make_chunk(ranges, block_info, shape, record_dtype, range_dtype, ndim, path, _name):
+def sparse_hdf5_group_to_backed_dataset(obj):
+    if isinstance(obj, Group):
+        return SparseDataset(obj).to_backed()
+    else:
+        return obj
+
+
+def make_chunk(ranges, block_info, shape, record_dtype, range_dtype, ndim, path, _name, to_array):
     block_info = block_info[0]
     block_idxs = block_info['array-location']
     rank = len(block_idxs)
@@ -221,16 +234,16 @@ def make_chunk(ranges, block_info, shape, record_dtype, range_dtype, ndim, path,
             record_dtype,
             ndim,
             pos,
-            to_array=lambda group: SparseDataset(group).to_backed() if isinstance(group, Group) else group
+            to_array=to_array
         )
     ) \
     .reshape((1,)*rank)
 
 
-def to_arr(c, rank): return c[(0,)*rank].arr()
+def to_arr(c, rank): return c[(0,) * rank].arr()
 
 
-def load_tensor(*, X=None, path=None, name=None, chunk_size=2 ** 20, to_array=None):
+def load_tensor(*, X=None, path=None, name=None, chunk_size = 'auto', to_array=sparse_hdf5_group_to_backed_dataset):
     if X:
         ctx = nullcontext()
         path = X.file.filename
@@ -242,7 +255,7 @@ def load_tensor(*, X=None, path=None, name=None, chunk_size=2 ** 20, to_array=No
     print(f'Loading HDF5 tensor: {path}:{name}: {X}')
 
     with ctx:
-        chunks = normalize_chunks('auto', X.shape, dtype = X.dtype)
+        chunks = normalize_chunks(chunk_size, X.shape, dtype = X.dtype)
         rank = len(chunks)
         chunk_ends = [ cumsum(chunk) for chunk in chunks ]
         range_dtype = [('start','<i8'),('end','<i8')]
@@ -285,6 +298,7 @@ def load_tensor(*, X=None, path=None, name=None, chunk_size=2 ** 20, to_array=No
             ndim=X.ndim,
             path=path,
             _name='X',
+            to_array=to_array,
         )
 
         arr = h5chunks.map_blocks(to_arr, chunks=chunks, dtype=X.dtype, rank=rank)
