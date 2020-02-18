@@ -62,7 +62,7 @@ class Pos:
                         reversed([
                             max
                             for max
-                            in dim_maxs
+                            in dim_maxs[1:]
                         ])
                     )
                 )
