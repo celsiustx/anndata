@@ -1,10 +1,10 @@
 
-from anndata._io.register import register_numerics
 from numpy import array
 import pytest
 
 @pytest.mark.skip(reason="test data references a file in Ryan's home dir")
 def test_dask():
+    from anndata._io.register import register_numerics
     path = '/Users/ryan/c/celsius/notebooks/data/Fib.imputed.1k.legacy.h5ad'
     distributed = True
     if distributed:
