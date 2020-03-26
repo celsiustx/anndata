@@ -5,3 +5,12 @@ h5py
 natsort
 importlib_metadata>=0.7; python_version < '3.8'
 packaging
+xlrd==1.2.0
+setuptools-scm==3.5.0
+psycopg2-binary==2.8.4
+scikit-learn==0.22.2.post1
+sklearn==0.0
+# dask
+toolz==0.10.0
+fsspec>=0.3.3
+partd==1.1.0

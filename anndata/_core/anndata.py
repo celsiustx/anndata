@@ -389,6 +389,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         else:
             self._raw = None
 
+        self._dask = False
+
     def _init_as_actual(
         self,
         X=None,
