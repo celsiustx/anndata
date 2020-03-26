@@ -5,3 +5,6 @@ h5py
 natsort
 importlib_metadata>=0.7; python_version < '3.8'
 packaging
+# TODO: make these belog to an "anndata[dask]" "extra"
+dask[dataframe]
+dask[array]
