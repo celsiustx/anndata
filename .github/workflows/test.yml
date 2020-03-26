@@ -38,4 +38,4 @@ jobs:
           echo "PATH: $PATH"
           echo "PYTHONPATH: $PYTHONPATH"
           python -c 'import pandas; print(pandas.__file__)' || echo 'pandas not found'
-          #pytest -s -vv
+          pytest -s -vv
