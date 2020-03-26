@@ -28,4 +28,5 @@ jobs:
           pip install --user -e .
       - name: Test with pytest
         run: |
+          export PATH=~/.local/bin:$PATH
           pytest -s -vv
