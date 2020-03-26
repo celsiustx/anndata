@@ -4,5 +4,6 @@ cd "$DIR"
 virtualenv --python=python3 env
 . env/bin/activate
 pip install -r requirements.txt
-pip install pytest
-PYTHONPATH=.:../dask python -mpytest -vv .
+pip install -r requirements_tests.txt
+pip install -e .
+python -mpytest -vv .
