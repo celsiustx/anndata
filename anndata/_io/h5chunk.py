@@ -1,4 +1,8 @@
-from contextlib import nullcontext
+try:
+    from contextlib import nullcontext
+except ImportError:
+    from contextlib import suppress as nullcontext
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Tuple, Union
