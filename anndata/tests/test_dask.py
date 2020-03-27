@@ -27,19 +27,19 @@ def test_dask():
     write_sql(ad, 'test_dask_legacy', db_url, if_exists='replace', dask=True)
 
 
-from anndata._io.h5chunk import Slice, Range
+from anndata._io.h5chunk import Chunk, Range
 
 
 @pytest.mark.skip(reason="calls methods on Pos that do not exist yet")
 def test_pos():
     arr = array([ int(str(i)*2) for i in range(100) ])
-    pos = Slice.from_arr(arr, ((0, 100),))
-    coords = pos.coords
+    pos = Chunk.from_arr(arr, ((0, 100),))
+    coords = pos.ranges
     assert coords == (Range(0, 0, 100, 100, 1),)
 
     R = 10
     C = 10
     arr = array([ [ R*r+c for c in range(C) ] for r in range(R) ])
-    pos = Slice.from_arr(arr, ((2, 5), (3, 7)))
-    coords = pos.coords
+    pos = Chunk.from_arr(arr, ((2, 5), (3, 7)))
+    coords = pos.ranges
     assert coords == (Range(0, 2, 5, R, R), Range(1, 3, 7, C, 1))

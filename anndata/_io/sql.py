@@ -16,7 +16,7 @@ ddf_to_sql = delayed(df_to_sql)
 
 
 from anndata import AnnData
-from .h5chunk import Slice
+from .h5chunk import Chunk
 
 
 # TODO: will overflow at 2**32, but performance is notably worse using Postgres `bigint` types, so leave as-is for now, until better optimizing can be done on a per-table basis
@@ -37,11 +37,11 @@ def read_sql(table_name_prefix, engine):
     raise NotImplementedError
 
 
-def to_dataframe(arr, pos: Union[Slice, None]):
+def to_dataframe(arr, pos: Union[Chunk, None]):
     if pos is None:
-        pos = Slice.whole_array(arr)
+        pos = Chunk.whole_array(arr)
 
-    coords = pos.coords
+    coords = pos.ranges
     assert arr.ndim == len(coords), f'{arr.ndim} != {len(coords)}: {coords}'
 
     idx_offset = pos.idx
@@ -165,7 +165,7 @@ def write_df(df, table_name, db_url, if_exists=None):
 def to_sql(block, block_info, table_name, db_url):
     print(f'block_info: {block_info}, block {type(block)}')
     block_info = block_info[0]
-    df = to_dataframe(block, pos=Slice.from_block_info(block_info))
+    df = to_dataframe(block, pos=Chunk.from_block_info(block_info))
     df.to_sql(table_name, db_url, if_exists='append')
     return array(True).reshape((1,)*block.ndim)
 

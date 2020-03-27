@@ -5,7 +5,7 @@ except ImportError:
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, List, Tuple, Union
+from typing import Callable, Tuple, Union, Collection
 
 from dask.array import from_array
 from dask.array.core import normalize_chunks
@@ -24,7 +24,7 @@ class Range:
     '''Info about a range along a specific axis in a tensor
 
     A `Range` has some awareness of other dimension `Range`s stored alongside it in a
-    `Slice` in that it stores a `stride` (the product of the size of all `Range`'s "to
+    `Chunk` in that it stores a `stride` (the product of the size of all `Range`'s "to
     the right" of this one; useful when mapping between 1-D and N-D representations of a tensor)
     '''
     idx: int
@@ -38,22 +38,23 @@ class Range:
 
 
 @dataclass
-class Slice:
-    '''N-Dimensional, rectilinear slice of a tensor; comprised of one `Range` for each
-    dimension'''
-    coords: Tuple[Range, ...]
+class Chunk:
+    '''N-Dimensional slice of a tensor in a rectilinear grid of similar "Chunks"
+
+    Comprised of one `Range` for each dimension'''
+    ranges: Tuple[Range, ...]
 
     @property
     def idx(self):
-        '''"Linearized" index of the "start" corner of this `Slice`'''
-        return sum([ coord.stride * coord.start for coord in self.coords ])
+        '''"Linearized" index of the "start" corner of this `Chunk`'''
+        return sum([range.stride * range.start for range in self.ranges])
 
     @staticmethod
     def whole_array(arr):
-        '''Build a `Slice` encompassing all elements in the input array'''
+        '''Build a `Chunk` encompassing all elements in the input array'''
         shape = arr.shape
         rank = len(shape)
-        return Slice.build(
+        return Chunk.build(
             (0,) * rank,
             [ (0, max) for max in shape ],
             shape,
@@ -61,22 +62,36 @@ class Slice:
 
     @staticmethod
     def from_block_info(block_info):
-        '''Build a `Slice` from a Dask "block info"
+        '''Build a `Chunk` from a Dask "block info"
 
         Dask passes a "block_info" parameter to the lambda passed to
-        dask.array.Array.map_blocks; this converts that structure to a `Slice`'''
+        dask.array.Array.map_blocks; this converts that structure to a `Chunk`'''
         chunk_idxs = block_info['chunk-location']
         chunk_offsets = block_info['array-location']
         dim_maxs = block_info['shape']
-        return Slice.build(chunk_idxs, chunk_offsets, dim_maxs)
+        return Chunk.build(chunk_idxs, chunk_offsets, dim_maxs)
 
     @staticmethod
     def build(
-        chunk_idxs: Iterable[int],
-        chunk_offsets: Iterable[Tuple[int, int]],
-        dim_maxs: Iterable[int],
+        chunk_idxs: Collection[int],
+        chunk_ranges: Collection[Tuple[int, int]],
+        dim_maxs: Collection[int],
     ):
-        '''Build a `Slice` from some precursor values'''
+        '''Build a `Chunk` from some precursor values
+
+        The three inputs should all be the same length (the "rank" of the containing
+        tensor).
+
+        :param chunk_idxs: coordinates of this `Chunk` in the tensor of `Chunk`s that
+        comprise the tensor of which this `Chunk` is a member
+        :param chunk_ranges: [start,end) tuples for each dimension, giving the ranges
+        along each axis that this `Chunk`` spans.
+        :param dim_maxs: the maximum size of each dimension in the containing tensor
+        (independent of specific `Chunk`s' positions); used to compute "strides"
+        '''
+        assert len(chunk_idxs) == len(chunk_ranges)
+        assert len(chunk_idxs) == len(dim_maxs)
+
         strides = list(
             reversed(
                 cumprod(
@@ -91,12 +106,12 @@ class Slice:
                 )
             )
         )
-        return Slice(tuple([
+        return Chunk(tuple([
             Range(chunk_idx, start, end, max, stride)
             for chunk_idx, (start, end), max, stride
             in zip(
                 chunk_idxs,
-                chunk_offsets,
+                chunk_ranges,
                 dim_maxs,
                 strides,
             )
@@ -112,30 +127,27 @@ class H5Chunk:
     path: str
     dtype: dtype
     ndim: int
-    pos: Slice
+    pos: Chunk
     to_array: Callable[[Union[Dataset,Group]], spmatrix] = None
-
-    # def __init__(self):
-    #     assert self.ndim == len(self.coords)
 
     @property
     def shape(self):
-        return tuple( coord.shape for coord in self.coords )
+        return tuple( range.size for range in self.ranges )
 
     @property
     def start(self):
-        return tuple( coord.start for coord in self.coords )
+        return tuple( range.start for range in self.ranges )
 
     @property
     def idx(self):
-        return tuple( coord.idx for coord in self.coords )
+        return tuple( range.idx for range in self.ranges )
 
     @property
     def slice(self):
-        return tuple( slice(coord.start, coord.end) for coord in self.coords )
+        return tuple( slice(range.start, range.end) for range in self.ranges )
 
     @property
-    def coords(self): return self.pos.coords
+    def ranges(self): return self.pos.ranges
 
     def arr(self):
         print(f'Opening {self.file} ({self.path}): {self.idx} ({self.slice})')
@@ -249,7 +261,7 @@ def make_chunk(ranges, block_info, shape, record_dtype, range_dtype, ndim, path,
     arr.dtype = range_dtype
     arr = arr.reshape((rank,))
     strides = list(reversed(cumprod([1] + list(reversed(shape[1:])))))
-    pos = Slice(tuple([
+    pos = Chunk(tuple([
         Range(
             block_idx,
             start, end,
