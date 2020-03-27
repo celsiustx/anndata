@@ -8,6 +8,24 @@ from scipy import sparse
 from shutil import rmtree
 from tempfile import TemporaryDirectory
 
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass
+class Obj:
+    dict: Any
+    default: Any = None
+
+    def __getattr__(self, item):
+        if item in self.dict:
+            return self.dict[item]
+
+        if self.default:
+            return self.default[item]
+
+        return self.dict[item]
+
 
 def test_load():
     R = 100
@@ -82,18 +100,18 @@ def test_load():
         coo = X.tocoo()
         rows, cols = coo.nonzero()
         nnz = list(zip(list(rows), list(cols)))
-        return ad, nnz
+        return Obj(dict(ad=ad, nnz=nnz, obs=ad.obs, var=ad.var), default=ad)
 
-    old_ad, old_nnz = load_ad(old_path)
-    new_ad, new_nnz = load_ad(new_path)
+    old = load_ad(old_path)
+    new = load_ad(new_path)
 
-    print(old_nnz[:20])
-    print(new_nnz[:20])
-    assert old_nnz == new_nnz
+    print(old.nnz[:20])
+    print(new.nnz[:20])
+    assert old.nnz == new.nnz
 
     from pandas.testing import assert_frame_equal
-    assert_frame_equal(old_ad.obs.compute(), new_ad.obs.compute())
-    assert_frame_equal(old_ad.var.compute(), new_ad.var.compute())
+    assert_frame_equal(old.obs.compute(), new.obs.compute())
+    assert_frame_equal(old.var.compute(), new.var.compute())
 
     # with TemporaryDirectory() as dir:
     #     path = Path(dir) / 'tmp.h5ad'
