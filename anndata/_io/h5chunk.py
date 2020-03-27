@@ -1,3 +1,8 @@
+#
+# This module was added as part of adding dask support.
+# Possibly consider upstreaming to dask vs. anndata?
+#
+
 try:
     from contextlib import nullcontext
 except ImportError:
