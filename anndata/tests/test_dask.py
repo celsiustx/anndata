@@ -71,7 +71,8 @@ def test_load():
         if not path.exists():
             ad.write_h5ad(path)
 
-    write(new_path, overwrite=True)
+    overwrite = False
+    write(new_path, overwrite=overwrite)
 
     from anndata import read_h5ad
 
@@ -89,6 +90,10 @@ def test_load():
     print(old_nnz[:20])
     print(new_nnz[:20])
     assert old_nnz == new_nnz
+
+    from pandas.testing import assert_frame_equal
+    assert_frame_equal(old_ad.obs.compute(), new_ad.obs.compute())
+    assert_frame_equal(old_ad.var.compute(), new_ad.var.compute())
 
     # with TemporaryDirectory() as dir:
     #     path = Path(dir) / 'tmp.h5ad'
