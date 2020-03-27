@@ -27,15 +27,9 @@ jobs:
           pip install --user -r requirements.txt
           pip install --user -r requirements_tests.txt
           pip install --user -e .
-          which python; which pip
-          python --version; pip --version
-          export PATH=~/.local/bin:$PATH
-          export PYTHONPATH=~/.local/lib:.:$PYTHONPATH
       - name: Test with pytest
         run: |
           export PATH=~/.local/bin:$PATH
           export PYTHONPATH=~/.local/lib:.:$PYTHONPATH
-          echo "PATH: $PATH"
-          echo "PYTHONPATH: $PYTHONPATH"
           python -c 'import pandas; print(pandas.__file__)' || echo 'pandas not found'
           pytest -s -vv
