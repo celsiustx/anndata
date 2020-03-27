@@ -5,7 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.7]
+        python-version: [3.6,3.7]
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python ${{ matrix.python-version }}
@@ -15,11 +15,8 @@ jobs:
       - name: Cache pip
         uses: actions/cache@v1
         with:
-          path: ~/.local # This path is specific to Ubuntu
-          # Look to see if there is a cache hit for the corresponding requirements file
+          path: ~/.local
           key: ${{ matrix.python-version }}-dotlocal12-${{ hashFiles('requirements*.txt') }}
-          restore-keys: |
-            ${{ matrix.python-version }}-dotlocal12-
       - name: Install dependencies
         run: |
           export PATH=~/.local/bin:$PATH
@@ -31,5 +28,4 @@ jobs:
         run: |
           export PATH=~/.local/bin:$PATH
           export PYTHONPATH=~/.local/lib:.:$PYTHONPATH
-          python -c 'import pandas; print(pandas.__file__)' || echo 'pandas not found'
           pytest -s -vv
