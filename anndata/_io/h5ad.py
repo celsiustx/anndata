@@ -316,6 +316,7 @@ def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"], dask:
     attributes = ["obsm", "varm", "obsp", "varp", "uns", "layers"]
     df_attributes = ["obs", "var"]
 
+    # TODO: dask
     d.update({k: read_attribute(f[k]) for k in attributes if k in f})
     for k in df_attributes:
         if k in f:  # Backwards compat
