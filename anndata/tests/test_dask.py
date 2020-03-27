@@ -30,16 +30,20 @@ def test_dask():
 from anndata._io.h5chunk import Chunk, Range
 
 
-@pytest.mark.skip(reason="calls methods on Pos that do not exist yet")
 def test_pos():
     arr = array([ int(str(i)*2) for i in range(100) ])
-    pos = Chunk.from_arr(arr, ((0, 100),))
-    coords = pos.ranges
-    assert coords == (Range(0, 0, 100, 100, 1),)
+    chunk = Chunk.whole_array(arr)
+    ranges = chunk.ranges
+    assert ranges == (Range(0, 0, 100, 100, 1),)
 
-    R = 10
-    C = 10
-    arr = array([ [ R*r+c for c in range(C) ] for r in range(R) ])
-    pos = Chunk.from_arr(arr, ((2, 5), (3, 7)))
-    coords = pos.ranges
-    assert coords == (Range(0, 2, 5, R, R), Range(1, 3, 7, C, 1))
+    R = 20
+    C = 20
+    arr = array([
+        [ R*r+c for c in range(C) ]
+        for r in range(R)
+    ])
+    chunk = Chunk.build((2, 3), ((4, 6), (12, 16)), (R, C))
+    assert chunk == Chunk((
+        Range(2,  4,  6, R, C),
+        Range(3, 12, 16, C, 1),
+    ))
