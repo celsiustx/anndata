@@ -5,7 +5,7 @@ except ImportError:
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Tuple, Union
+from typing import Callable, Iterable, List, Tuple, Union
 
 from dask.array import from_array
 from dask.array.core import normalize_chunks
@@ -20,7 +20,13 @@ from anndata._io.h5ad import SparseDataset
 
 
 @dataclass
-class Coord:
+class Range:
+    '''Info about a range along a specific axis in a tensor
+
+    A `Range` has some awareness of other dimension `Range`s stored alongside it in a
+    `Slice` in that it stores a `stride` (the product of the size of all `Range`'s "to
+    the right" of this one; useful when mapping between 1-D and N-D representations of a tensor)
+    '''
     idx: int
     start: int
     end: int
@@ -28,22 +34,26 @@ class Coord:
     stride: int
 
     @property
-    def shape(self): return self.end - self.start
+    def size(self): return self.end - self.start
 
 
 @dataclass
-class Pos:
-    coords: Tuple[Coord, ...]
+class Slice:
+    '''N-Dimensional, rectilinear slice of a tensor; comprised of one `Range` for each
+    dimension'''
+    coords: Tuple[Range, ...]
 
     @property
     def idx(self):
+        '''"Linearized" index of the "start" corner of this `Slice`'''
         return sum([ coord.stride * coord.start for coord in self.coords ])
 
     @staticmethod
     def whole_array(arr):
+        '''Build a `Slice` encompassing all elements in the input array'''
         shape = arr.shape
         rank = len(shape)
-        return Pos.build(
+        return Slice.build(
             (0,) * rank,
             [ (0, max) for max in shape ],
             shape,
@@ -51,13 +61,22 @@ class Pos:
 
     @staticmethod
     def from_block_info(block_info):
+        '''Build a `Slice` from a Dask "block info"
+
+        Dask passes a "block_info" parameter to the lambda passed to
+        dask.array.Array.map_blocks; this converts that structure to a `Slice`'''
         chunk_idxs = block_info['chunk-location']
         chunk_offsets = block_info['array-location']
         dim_maxs = block_info['shape']
-        return Pos.build(chunk_idxs, chunk_offsets, dim_maxs)
+        return Slice.build(chunk_idxs, chunk_offsets, dim_maxs)
 
     @staticmethod
-    def build(chunk_idxs, chunk_offsets, dim_maxs):
+    def build(
+        chunk_idxs: Iterable[int],
+        chunk_offsets: Iterable[Tuple[int, int]],
+        dim_maxs: Iterable[int],
+    ):
+        '''Build a `Slice` from some precursor values'''
         strides = list(
             reversed(
                 cumprod(
@@ -72,8 +91,8 @@ class Pos:
                 )
             )
         )
-        return Pos(tuple([
-            Coord(chunk_idx, start, end, max, stride)
+        return Slice(tuple([
+            Range(chunk_idx, start, end, max, stride)
             for chunk_idx, (start, end), max, stride
             in zip(
                 chunk_idxs,
@@ -93,7 +112,7 @@ class H5Chunk:
     path: str
     dtype: dtype
     ndim: int
-    pos: Pos
+    pos: Slice
     to_array: Callable[[Union[Dataset,Group]], spmatrix] = None
 
     # def __init__(self):
@@ -230,8 +249,8 @@ def make_chunk(ranges, block_info, shape, record_dtype, range_dtype, ndim, path,
     arr.dtype = range_dtype
     arr = arr.reshape((rank,))
     strides = list(reversed(cumprod([1] + list(reversed(shape[1:])))))
-    pos = Pos(tuple([
-        Coord(
+    pos = Slice(tuple([
+        Range(
             block_idx,
             start, end,
             shape[idx],
