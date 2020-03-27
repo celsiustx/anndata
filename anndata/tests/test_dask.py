@@ -1,8 +1,10 @@
 
-from anndata._io.register import register_numerics
 from numpy import array
+import pytest
 
+@pytest.mark.skip(reason="test data references a file in Ryan's home dir")
 def test_dask():
+    from anndata._io.register import register_numerics
     path = '/Users/ryan/c/celsius/notebooks/data/Fib.imputed.1k.legacy.h5ad'
     distributed = True
     if distributed:
@@ -26,6 +28,9 @@ def test_dask():
 
 
 from anndata._io.h5chunk import Pos, Coord
+
+
+@pytest.mark.skip(reason="calls methods on Pos that do not exist yet")
 def test_pos():
     arr = array([ int(str(i)*2) for i in range(100) ])
     pos = Pos.from_arr(arr, ((0,100),))

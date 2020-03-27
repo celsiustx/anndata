@@ -13,6 +13,8 @@ __pycache__/
 # Tests and coverage
 /.pytest_cache/
 /.cache/
+/env/
+/dask-worker-space/
 
 # docs
 /docs/anndata.*
@@ -20,4 +22,3 @@ __pycache__/
 
 # IDEs
 /.idea/
-

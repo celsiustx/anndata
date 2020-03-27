@@ -1,0 +1,31 @@
+name: pytest
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.6,3.7]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v1
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Cache pip
+        uses: actions/cache@v1
+        with:
+          path: ~/.local
+          key: ${{ matrix.python-version }}-dotlocal12-${{ hashFiles('requirements*.txt') }}
+      - name: Install dependencies
+        run: |
+          export PATH=~/.local/bin:$PATH
+          python -m pip install --user --upgrade pip
+          pip install --user -r requirements.txt
+          pip install --user -r requirements_tests.txt
+          pip install --user -e .
+      - name: Test with pytest
+        run: |
+          export PATH=~/.local/bin:$PATH
+          export PYTHONPATH=~/.local/lib:.:$PYTHONPATH
+          pytest -s -vv
