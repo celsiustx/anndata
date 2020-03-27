@@ -27,6 +27,7 @@ class Obj:
         return self.dict[item]
 
 
+@pytest.mark.xfail(reason="old- and new-style AnnData h5ad's currently don't agree about the name of the index of the 'obs' DataFrame")
 def test_load():
     R = 100
     C = 200
@@ -117,31 +118,6 @@ def test_load():
     #     path = Path(dir) / 'tmp.h5ad'
     #     ad.write_h5ad(path)
 
-
-
-@pytest.mark.skip(reason="test data references a file in Ryan's home dir")
-def test_dask():
-    from anndata._io.register import register_numerics
-    path = '/Users/ryan/c/celsius/notebooks/data/Fib.imputed.1k.legacy.h5ad'
-    distributed = True
-    if distributed:
-        from dask.distributed import Client
-        client = Client()
-        print(f'client: {client}')
-
-        from distributed import Worker, WorkerPlugin
-        class MyPlugin(WorkerPlugin):
-            def setup(self, worker: Worker):
-                register_numerics()
-                print(f'worker setup: {worker}')
-
-        client.register_worker_plugin(MyPlugin())
-    from anndata import read_h5ad
-    ad = read_h5ad(path, backed='r', dask=True)
-    print(ad.obs.head())
-    from anndata._io.sql import write_sql
-    db_url = 'postgres:///sc'
-    write_sql(ad, 'test_dask_legacy', db_url, if_exists='replace', dask=True)
 
 
 from anndata._io.h5chunk import Chunk, Range
