@@ -74,10 +74,21 @@ def test_load():
     write(new_path, overwrite=True)
 
     from anndata import read_h5ad
-    old_ad = read_h5ad(old_path, backed='r', dask=True)
-    new_ad = read_h5ad(new_path, backed='r', dask=True)
 
-    old_ad.X.compute()
+    def load_ad(path):
+        ad = read_h5ad(path, backed='r', dask=True)
+        X = ad.X.compute()
+        coo = X.tocoo()
+        rows, cols = coo.nonzero()
+        nnz = list(zip(list(rows), list(cols)))
+        return ad, nnz
+
+    old_ad, old_nnz = load_ad(old_path)
+    new_ad, new_nnz = load_ad(new_path)
+
+    print(old_nnz[:20])
+    print(new_nnz[:20])
+    assert old_nnz == new_nnz
 
     # with TemporaryDirectory() as dir:
     #     path = Path(dir) / 'tmp.h5ad'
