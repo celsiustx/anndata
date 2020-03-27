@@ -40,10 +40,11 @@ def test_load():
     def spreadsheet_column(idx):
         return ''.join([ chr(ord('A')+digit) for digit in digits(idx, 26) ])
 
-    X = sparse.random(R, C, format="csc", density=0.1)
+    X = sparse.random(R, C, format="csc", density=0.1, random_state=123)
+
     obs = DF([
         {
-            'index': f'row {r}',
+            'label': f'row {r}',
             'idx²': r**2,
             'Prime': all([
                 r % f != 0
@@ -62,16 +63,21 @@ def test_load():
     ])
 
     ad = AnnData(X=X, obs=obs, var=var)
-    path = Path.cwd() / 'tmp.h5ad'
-    if path.exists():
-        pass
-        #rmtree(path)
-    else:
-        ad.write_h5ad(path)
+    new_path = Path.cwd() / 'new.h5ad'
+    old_path = Path.cwd() / 'old.h5ad'
+    def write(path, overwrite=False):
+        if path.exists() and overwrite:
+            path.unlink()
+        if not path.exists():
+            ad.write_h5ad(path)
+
+    write(new_path, overwrite=True)
 
     from anndata import read_h5ad
-    ad2 = read_h5ad(path, backed=True, dask=True)
+    old_ad = read_h5ad(old_path, backed='r', dask=True)
+    new_ad = read_h5ad(new_path, backed='r', dask=True)
 
+    old_ad.X.compute()
 
     # with TemporaryDirectory() as dir:
     #     path = Path(dir) / 'tmp.h5ad'
