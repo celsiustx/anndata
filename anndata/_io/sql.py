@@ -16,7 +16,7 @@ ddf_to_sql = delayed(df_to_sql)
 
 
 from anndata import AnnData
-from .h5chunk import Pos
+from .h5chunk import Chunk
 
 
 # TODO: will overflow at 2**32, but performance is notably worse using Postgres `bigint` types, so leave as-is for now, until better optimizing can be done on a per-table basis
@@ -37,22 +37,22 @@ def read_sql(table_name_prefix, engine):
     raise NotImplementedError
 
 
-def to_dataframe(arr, pos: Union[Pos, None]):
-    if pos is None:
-        pos = Pos.whole_array(arr)
+def to_dataframe(arr, chunk: Union[Chunk, None]):
+    if chunk is None:
+        chunk = Chunk.whole_array(arr)
 
-    coords = pos.coords
-    assert arr.ndim == len(coords), f'{arr.ndim} != {len(coords)}: {coords}'
+    ranges = chunk.ranges
+    assert arr.ndim == len(ranges), f'{arr.ndim} != {len(ranges)}: {ranges}'
 
-    idx_offset = pos.idx
+    idx_offset = chunk.idx
 
     if isinstance(arr, spmatrix):
         coo = arr.tocoo()
         (_, C) = coo.shape
-        r_coord, c_coord = coords
-        base_idx = pos.idx
-        base_row = r_coord.start
-        base_col = c_coord.start
+        r_range, c_range = ranges
+        base_idx = chunk.idx
+        base_row = r_range.start
+        base_col = c_range.start
 
         idx_dtype = [ ('idx',IDX_DTYPE) ]  # TODO: right-size integer index types?
         idxs_dtype = [
@@ -81,7 +81,7 @@ def to_dataframe(arr, pos: Union[Pos, None]):
     else:
         assert isinstance(arr, ndarray), f'Unexpected type {type(arr)}: {arr}'
         if arr.ndim == 1:
-            (coord,) = coords
+            (coord,) = ranges
             assert len(arr) == (coord.end - coord.start), f'{len(arr)} != {coord.end} - {coord.start}'
             df = \
                 concat(
@@ -127,7 +127,7 @@ def to_dataframe(arr, pos: Union[Pos, None]):
 
         dtype = idx_dtype + idxs_dtype + value_dtype
 
-        coo = to_coo(idx_offset, coords, [], arr)
+        coo = to_coo(idx_offset, ranges, [], arr)
         narr = array(coo, dtype=dtype)
         narr = narr.reshape((narr.size,))
         return DF(narr).set_index('idx')
@@ -165,7 +165,7 @@ def write_df(df, table_name, db_url, if_exists=None):
 def to_sql(block, block_info, table_name, db_url):
     print(f'block_info: {block_info}, block {type(block)}')
     block_info = block_info[0]
-    df = to_dataframe(block, pos=Pos.from_block_info(block_info))
+    df = to_dataframe(block, chunk=Chunk.from_block_info(block_info))
     df.to_sql(table_name, db_url, if_exists='append')
     return array(True).reshape((1,)*block.ndim)
 
@@ -196,5 +196,5 @@ def write_tensor(t, table_name, db_url, if_exists=None, dask=False):
         print(f'Wrapping tensor in dask: {t}')
         return write_tensor(from_array(t), table_name, db_url, if_exists)
     else:
-        df = to_dataframe(t, pos=None)
+        df = to_dataframe(t, chunk=None)
         df.to_sql(table_name, db_url, if_exists=if_exists)

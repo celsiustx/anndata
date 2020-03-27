@@ -1,3 +1,8 @@
+#
+# This module was added as part of adding dask support.
+# Possibly consider upstreaming to dask vs. anndata?
+#
+
 try:
     from contextlib import nullcontext
 except ImportError:
@@ -5,7 +10,7 @@ except ImportError:
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Tuple, Union
+from typing import Callable, Tuple, Union, Collection
 
 from dask.array import from_array
 from dask.array.core import normalize_chunks
@@ -20,7 +25,13 @@ from anndata._io.h5ad import SparseDataset
 
 
 @dataclass
-class Coord:
+class Range:
+    '''Info about a range along a specific axis in a tensor
+
+    A `Range` has some awareness of other dimension `Range`s stored alongside it in a
+    `Chunk` in that it stores a `stride` (the product of the size of all `Range`'s "to
+    the right" of this one; useful when mapping between 1-D and N-D representations of a tensor)
+    '''
     idx: int
     start: int
     end: int
@@ -28,22 +39,27 @@ class Coord:
     stride: int
 
     @property
-    def shape(self): return self.end - self.start
+    def size(self): return self.end - self.start
 
 
 @dataclass
-class Pos:
-    coords: Tuple[Coord, ...]
+class Chunk:
+    '''N-Dimensional slice of a tensor in a rectilinear grid of similar "Chunks"
+
+    Comprised of one `Range` for each dimension'''
+    ranges: Tuple[Range, ...]
 
     @property
     def idx(self):
-        return sum([ coord.stride * coord.start for coord in self.coords ])
+        '''"Linearized" index of the "start" corner of this `Chunk`'''
+        return sum([range.stride * range.start for range in self.ranges])
 
     @staticmethod
     def whole_array(arr):
+        '''Build a `Chunk` encompassing all elements in the input array'''
         shape = arr.shape
         rank = len(shape)
-        return Pos.build(
+        return Chunk.build(
             (0,) * rank,
             [ (0, max) for max in shape ],
             shape,
@@ -51,13 +67,36 @@ class Pos:
 
     @staticmethod
     def from_block_info(block_info):
+        '''Build a `Chunk` from a Dask "block info"
+
+        Dask passes a "block_info" parameter to the lambda passed to
+        dask.array.Array.map_blocks; this converts that structure to a `Chunk`'''
         chunk_idxs = block_info['chunk-location']
         chunk_offsets = block_info['array-location']
         dim_maxs = block_info['shape']
-        return Pos.build(chunk_idxs, chunk_offsets, dim_maxs)
+        return Chunk.build(chunk_idxs, chunk_offsets, dim_maxs)
 
     @staticmethod
-    def build(chunk_idxs, chunk_offsets, dim_maxs):
+    def build(
+        chunk_idxs: Collection[int],
+        chunk_ranges: Collection[Tuple[int, int]],
+        dim_maxs: Collection[int],
+    ):
+        '''Build a `Chunk` from some precursor values
+
+        The three inputs should all be the same length (the "rank" of the containing
+        tensor).
+
+        :param chunk_idxs: coordinates of this `Chunk` in the tensor of `Chunk`s that
+        comprise the tensor of which this `Chunk` is a member
+        :param chunk_ranges: [start,end) tuples for each dimension, giving the ranges
+        along each axis that this `Chunk`` spans.
+        :param dim_maxs: the maximum size of each dimension in the containing tensor
+        (independent of specific `Chunk`s' positions); used to compute "strides"
+        '''
+        assert len(chunk_idxs) == len(chunk_ranges)
+        assert len(chunk_idxs) == len(dim_maxs)
+
         strides = list(
             reversed(
                 cumprod(
@@ -72,12 +111,12 @@ class Pos:
                 )
             )
         )
-        return Pos(tuple([
-            Coord(chunk_idx, start, end, max, stride)
+        return Chunk(tuple([
+            Range(chunk_idx, start, end, max, stride)
             for chunk_idx, (start, end), max, stride
             in zip(
                 chunk_idxs,
-                chunk_offsets,
+                chunk_ranges,
                 dim_maxs,
                 strides,
             )
@@ -93,30 +132,27 @@ class H5Chunk:
     path: str
     dtype: dtype
     ndim: int
-    pos: Pos
+    pos: Chunk
     to_array: Callable[[Union[Dataset,Group]], spmatrix] = None
-
-    # def __init__(self):
-    #     assert self.ndim == len(self.coords)
 
     @property
     def shape(self):
-        return tuple( coord.shape for coord in self.coords )
+        return tuple( range.size for range in self.ranges )
 
     @property
     def start(self):
-        return tuple( coord.start for coord in self.coords )
+        return tuple( range.start for range in self.ranges )
 
     @property
     def idx(self):
-        return tuple( coord.idx for coord in self.coords )
+        return tuple( range.idx for range in self.ranges )
 
     @property
     def slice(self):
-        return tuple( slice(coord.start, coord.end) for coord in self.coords )
+        return tuple( slice(range.start, range.end) for range in self.ranges )
 
     @property
-    def coords(self): return self.pos.coords
+    def ranges(self): return self.pos.ranges
 
     def arr(self):
         print(f'Opening {self.file} ({self.path}): {self.idx} ({self.slice})')
@@ -143,7 +179,7 @@ class H5Chunk:
             return chunk
 
 
-def get_slice(path, name, start, end):
+def get_slice(path, name, start, end, index_col=None):
     '''Load rows [start,end) from HDF5 file `path` (group `name`) into a DataFrame'''
     with File(path, 'r') as f:
         obj = f[name]
@@ -162,13 +198,23 @@ def get_slice(path, name, start, end):
                 else:
                     return v[start:end]
 
-            return DF({ k: get_series(k) for k in columns })
+            df = DF({ k: get_series(k) for k in columns })
         else:
             dataset = obj
-            return DF(dataset[start:end])
+            df = DF(dataset[start:end])
+
+        if index_col is not None:
+            if isinstance(index_col, str):
+                df = df.set_index(index_col)
+            elif callable(index_col):
+                df = df.set_index(index_col(df))
+            else:
+                raise ValueError('Invalid index_col value: %s' % index_col)
+
+        return df
 
 
-def load_dataframe(*, dataset=None, group=None, path=None, name=None, chunk_size=2 ** 20):
+def load_dataframe(*, dataset=None, group=None, path=None, name=None, chunk_size=2 ** 20, index_col=None,):
     obj = dataset or group
     if obj:
         ctx = nullcontext()
@@ -198,7 +244,7 @@ def load_dataframe(*, dataset=None, group=None, path=None, name=None, chunk_size
         chunk_slices = list(zip(chunk_starts, chunk_starts[1:] + [size]))
 
     chunks = [
-        delayed(get_slice)(path, name, start, end)
+        delayed(get_slice)(path, name, start, end, index_col)
         for start, end in chunk_slices
     ]
 
@@ -230,8 +276,8 @@ def make_chunk(ranges, block_info, shape, record_dtype, range_dtype, ndim, path,
     arr.dtype = range_dtype
     arr = arr.reshape((rank,))
     strides = list(reversed(cumprod([1] + list(reversed(shape[1:])))))
-    pos = Pos(tuple([
-        Coord(
+    pos = Chunk(tuple([
+        Range(
             block_idx,
             start, end,
             shape[idx],

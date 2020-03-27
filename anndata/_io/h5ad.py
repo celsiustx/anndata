@@ -316,6 +316,7 @@ def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"], dask:
     attributes = ["obsm", "varm", "obsp", "varp", "uns", "layers"]
     df_attributes = ["obs", "var"]
 
+    # TODO: dask
     d.update({k: read_attribute(f[k]) for k in attributes if k in f})
     for k in df_attributes:
         if k in f:  # Backwards compat
@@ -467,8 +468,7 @@ def read_dataframe_legacy(dataset, dask: bool = False) -> pd.DataFrame:
     print(f'read_dataframe_legacy: {dataset} (dask {dask})')
     if dask:
         from .h5chunk import load_dataframe
-        df = load_dataframe(dataset=dataset)
-        df = df.set_index(df.columns[0])
+        df = load_dataframe(dataset=dataset, index_col=lambda df: df.columns[0])
     else:
         df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
         df.set_index(df.columns[0], inplace=True)
