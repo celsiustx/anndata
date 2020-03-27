@@ -49,7 +49,8 @@ def test_load():
     def spreadsheet_column(idx):
         return ''.join([ chr(ord('A')+digit) for digit in digits(idx, 26) ])
 
-    X = sparse.random(R, C, format="csc", density=0.1)
+    X = sparse.random(R, C, format="csc", density=0.1, random_state=123)
+
     obs = DF([
         {
             'label': f'row {r}',
@@ -71,12 +72,36 @@ def test_load():
     ])
 
     ad = AnnData(X=X, obs=obs, var=var)
-    path = Path.cwd() / 'legacy.h5ad'
-    if path.exists():
-        pass
-        #rmtree(path)
-    else:
-        ad.write_h5ad(path)
+    new_path = Path.cwd() / 'new.h5ad'
+    old_path = Path.cwd() / 'old.h5ad'
+    def write(path, overwrite=False):
+        if path.exists() and overwrite:
+            path.unlink()
+        if not path.exists():
+            ad.write_h5ad(path)
+
+    write(old_path, overwrite=True)
+
+    # from anndata import read_h5ad
+    #
+    # def load_ad(path):
+    #     ad = read_h5ad(path, backed='r', dask=True)
+    #     X = ad.X.compute()
+    #     coo = X.tocoo()
+    #     rows, cols = coo.nonzero()
+    #     nnz = list(zip(list(rows), list(cols)))
+    #     return ad, nnz
+    #
+    # old_ad, old_nnz = load_ad(old_path)
+    # new_ad, new_nnz = load_ad(new_path)
+    #
+    # print(old_nnz[:20])
+    # print(new_nnz[:20])
+    # assert old_nnz == new_nnz
+
+    # with TemporaryDirectory() as dir:
+    #     path = Path(dir) / 'tmp.h5ad'
+    #     ad.write_h5ad(path)
 
 
 def test_create_and_read_dataset(tmp_path):
