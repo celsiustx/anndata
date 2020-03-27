@@ -468,8 +468,7 @@ def read_dataframe_legacy(dataset, dask: bool = False) -> pd.DataFrame:
     print(f'read_dataframe_legacy: {dataset} (dask {dask})')
     if dask:
         from .h5chunk import load_dataframe
-        df = load_dataframe(dataset=dataset)
-        df = df.set_index(df.columns[0])
+        df = load_dataframe(dataset=dataset, index_col=lambda df: df.columns[0])
     else:
         df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
         df.set_index(df.columns[0], inplace=True)

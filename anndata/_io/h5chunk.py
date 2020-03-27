@@ -174,7 +174,7 @@ class H5Chunk:
             return chunk
 
 
-def get_slice(path, name, start, end):
+def get_slice(path, name, start, end, index_col=None):
     '''Load rows [start,end) from HDF5 file `path` (group `name`) into a DataFrame'''
     with File(path, 'r') as f:
         obj = f[name]
@@ -193,13 +193,23 @@ def get_slice(path, name, start, end):
                 else:
                     return v[start:end]
 
-            return DF({ k: get_series(k) for k in columns })
+            df = DF({ k: get_series(k) for k in columns })
         else:
             dataset = obj
-            return DF(dataset[start:end])
+            df = DF(dataset[start:end])
+
+        if index_col is not None:
+            if isinstance(index_col, str):
+                df = df.set_index(index_col)
+            elif callable(index_col):
+                df = df.set_index(index_col(df))
+            else:
+                raise ValueError('Invalid index_col value: %s' % index_col)
+
+        return df
 
 
-def load_dataframe(*, dataset=None, group=None, path=None, name=None, chunk_size=2 ** 20):
+def load_dataframe(*, dataset=None, group=None, path=None, name=None, chunk_size=2 ** 20, index_col=None,):
     obj = dataset or group
     if obj:
         ctx = nullcontext()
@@ -229,7 +239,7 @@ def load_dataframe(*, dataset=None, group=None, path=None, name=None, chunk_size
         chunk_slices = list(zip(chunk_starts, chunk_starts[1:] + [size]))
 
     chunks = [
-        delayed(get_slice)(path, name, start, end)
+        delayed(get_slice)(path, name, start, end, index_col)
         for start, end in chunk_slices
     ]
 

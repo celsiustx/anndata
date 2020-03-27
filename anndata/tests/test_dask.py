@@ -27,11 +27,7 @@ class Obj:
         return self.dict[item]
 
 
-@pytest.mark.xfail(reason="old- and new-style AnnData h5ad's currently don't agree about the name of the index of the 'obs' DataFrame")
-def test_load():
-    R = 100
-    C = 200
-
+def make_test_h5ad(R=100, C=200):
     def digits(n, b, empty_zero=False, significant_leading_zeros=True):
         '''Convert a number to an array of base-`b` digits, with a few toggle-able
         behaviors.
@@ -82,6 +78,15 @@ def test_load():
     ])
 
     ad = AnnData(X=X, obs=obs, var=var)
+    return ad
+
+
+@pytest.mark.parametrize('dask', [True, False])
+def test_load(dask):
+    R = 100
+    C = 200
+
+    ad = make_test_h5ad()
     new_path = Path.cwd() / 'new.h5ad'
     old_path = Path.cwd() / 'old.h5ad'
     def write(path, overwrite=False):
@@ -95,13 +100,15 @@ def test_load():
 
     from anndata import read_h5ad
 
+    def compute(o): return o.compute() if dask else o
+
     def load_ad(path):
-        ad = read_h5ad(path, backed='r', dask=True)
-        X = ad.X.compute()
-        coo = X.tocoo()
+        ad = read_h5ad(path, backed='r', dask=dask)
+        X = compute(ad.X)
+        coo = X.tocoo() if dask else X.value.tocoo()
         rows, cols = coo.nonzero()
         nnz = list(zip(list(rows), list(cols)))
-        return Obj(dict(ad=ad, nnz=nnz, obs=ad.obs, var=ad.var), default=ad)
+        return Obj(dict(ad=ad, nnz=nnz, obs=compute(ad.obs), var=compute(ad.var)), default=ad)
 
     old = load_ad(old_path)
     new = load_ad(new_path)
@@ -111,8 +118,15 @@ def test_load():
     assert old.nnz == new.nnz
 
     from pandas.testing import assert_frame_equal
-    assert_frame_equal(old.obs.compute(), new.obs.compute())
-    assert_frame_equal(old.var.compute(), new.var.compute())
+
+    # old AnnData's set DFs' index.name to "index", new style leaves it None
+    old.obs.index.name = None
+    old.var.index.name = None
+
+    print(old.obs.index)
+
+    assert_frame_equal(old.obs, new.obs)
+    assert_frame_equal(old.var, new.var)
 
     # with TemporaryDirectory() as dir:
     #     path = Path(dir) / 'tmp.h5ad'
