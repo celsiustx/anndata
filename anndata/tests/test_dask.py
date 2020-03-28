@@ -1,15 +1,14 @@
-from anndata import AnnData
-from math import floor, sqrt
-from pandas import DataFrame as DF
-from pathlib import Path
-from numpy import array
-import pytest
-from scipy import sparse
-from shutil import rmtree
-from tempfile import TemporaryDirectory
-
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+import pytest
+from math import floor, sqrt
+from numpy import array
+from pandas import DataFrame as DF
+from scipy import sparse
+
+from anndata import AnnData, read_h5ad
 
 
 @dataclass
@@ -81,14 +80,16 @@ def make_test_h5ad(R=100, C=200):
     return ad
 
 
+new_path = Path.cwd() / 'new.h5ad'
+old_path = Path.cwd() / 'old.h5ad'  # written by running `make_test_h5ad` in AnnData 0.6.22
+
+
 @pytest.mark.parametrize('dask', [True, False])
-def test_load(dask):
+def test_cmp_new_old_h5ad(dask):
     R = 100
     C = 200
 
     ad = make_test_h5ad()
-    new_path = Path.cwd() / 'new.h5ad'
-    old_path = Path.cwd() / 'old.h5ad'
     def write(path, overwrite=False):
         if path.exists() and overwrite:
             path.unlink()
@@ -97,8 +98,6 @@ def test_load(dask):
 
     overwrite = False
     write(new_path, overwrite=overwrite)
-
-    from anndata import read_h5ad
 
     def compute(o): return o.compute() if dask else o
 
@@ -127,11 +126,42 @@ def test_load(dask):
 
     assert_frame_equal(old.obs, new.obs)
     assert_frame_equal(old.var, new.var)
-
     # with TemporaryDirectory() as dir:
     #     path = Path(dir) / 'tmp.h5ad'
     #     ad.write_h5ad(path)
 
+
+from multipledispatch import dispatch
+
+
+from scipy.sparse import spmatrix
+@dispatch(spmatrix, spmatrix)
+def eq(l, r): assert (l != r).nnz == 0
+
+
+from anndata._io.h5ad import SparseDataset
+from dask.array import Array
+@dispatch(SparseDataset, Array)
+def eq(l, r): eq(l.value, r.compute())
+
+
+from pandas import DataFrame as DF
+from dask.dataframe import DataFrame as DDF
+from pandas.testing import assert_frame_equal
+@dispatch(DF, DDF)
+def eq(l, r): assert_frame_equal(l, r.compute())
+
+
+@pytest.mark.parametrize('path', [old_path, new_path])
+def test_dask_load(path):
+    ad1 = read_h5ad(path, backed='r', dask=False)
+    ad2 = read_h5ad(path, backed='r', dask= True)
+
+    eq(ad1.X, ad2.X)
+    eq(ad1.obs, ad2.obs)
+    eq(ad1.var, ad2.var)
+
+    # TODO: obsm, varm, obsp, varp, uns, layers, raw
 
 
 from anndata._io.h5chunk import Chunk, Range

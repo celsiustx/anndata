@@ -317,7 +317,7 @@ def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"], dask:
     df_attributes = ["obs", "var"]
 
     # TODO: dask
-    d.update({k: read_attribute(f[k]) for k in attributes if k in f})
+    d.update({k: read_attribute(f[k], dask=dask) for k in attributes if k in f})
     for k in df_attributes:
         if k in f:  # Backwards compat
             d[k] = read_dataframe(f[k], dask)
@@ -423,7 +423,7 @@ def read_h5ad(
             elif k in {"obs", "var"}:
                 d[k] = read_dataframe(f[k], dask)
             else:  # Base case
-                d[k] = read_attribute(f[k])
+                d[k] = read_attribute(f[k], dask=dask)
 
         d["raw"] = _read_raw(f, as_sparse, rdasp, dask=dask)
 
@@ -454,7 +454,7 @@ def _read_raw(
         assert rdasp is not None, "must supply rdasp if as_sparse is supplied"
     raw = {}
     if "X" in attrs and "raw/X" in f:
-        read_x = rdasp if "raw/X" in as_sparse else read_attribute
+        read_x = rdasp if "raw/X" in as_sparse else read_attribute  # TODO: dask
         raw["X"] = read_x(f["raw/X"])
     for v in ("var", "varm"):
         if v in attrs and f"raw/{v}" in f:
@@ -527,7 +527,8 @@ def read_series(dataset) -> Union[np.ndarray, pd.Categorical]:
 
 @read_attribute.register(h5py.Group)
 @report_read_key_on_error
-def read_group(group: h5py.Group) -> Union[dict, pd.DataFrame, sparse.spmatrix]:
+def read_group(group: h5py.Group, dask=False) -> Union[dict, pd.DataFrame, sparse.spmatrix]:
+    # TODO: dask
     if "h5sparse_format" in group.attrs:  # Backwards compat
         return SparseDataset(group).to_memory()
 
@@ -546,13 +547,14 @@ def read_group(group: h5py.Group) -> Union[dict, pd.DataFrame, sparse.spmatrix]:
         raise ValueError(f"Unfamiliar `encoding-type`: {encoding_type}.")
     d = dict()
     for sub_key, sub_value in group.items():
-        d[sub_key] = read_attribute(sub_value)
+        d[sub_key] = read_attribute(sub_value, dask=dask)
     return d
 
 
 @read_attribute.register(h5py.Dataset)
 @report_read_key_on_error
-def read_dataset(dataset: h5py.Dataset):
+def read_dataset(dataset: h5py.Dataset, dask=False):
+    # TODO: dask
     value = dataset[()]
     if not hasattr(value, "dtype"):
         return value
