@@ -1,84 +1,12 @@
-from dataclasses import dataclass
+from functools import singledispatch
 from pathlib import Path
-from typing import Any
 
 import pytest
-from math import floor, sqrt
-from numpy import array
-from pandas import DataFrame as DF
-from scipy import sparse
 
-from anndata import AnnData, read_h5ad
-
-
-@dataclass
-class Obj:
-    dict: Any
-    default: Any = None
-
-    def __getattr__(self, item):
-        if item in self.dict:
-            return self.dict[item]
-
-        if self.default:
-            return self.default[item]
-
-        return self.dict[item]
-
-
-def make_test_h5ad(R=100, C=200):
-    def digits(n, b, empty_zero=False, significant_leading_zeros=True):
-        '''Convert a number to an array of base-`b` digits, with a few toggle-able
-        behaviors.
-
-        The default parameters output an analogue to "spreadsheet-column" order, e.g. in
-        base-26 you get the equivalent of: "A","B",…,"Z","AA","AB",… (but with arrays of
-        integers ∈[0,26) instead of strings of letters).
-
-        :param empty_zero: when True, start counting from an empty array at zero
-                (otherwise, zero will be mapped to [0])
-        :param significant_leading_zeros: when True, enumerate non-empty natural-number
-                arrays containing the elements ∈[0,b)
-        '''
-        if significant_leading_zeros:
-            if not empty_zero: return digits(n+1, b, empty_zero=True, significant_leading_zeros=significant_leading_zeros)
-            bases = [1]
-            while n >= bases[-1]:
-                n -= bases[-1]
-                bases.append(bases[-1]*b)
-            n_digits = digits(n, b, empty_zero=True, significant_leading_zeros=False)
-            return [0]*(len(bases)-1-len(n_digits)) + n_digits
-        else:
-            return digits(n // b, b, empty_zero=True, significant_leading_zeros=False) + [n%b] if n else [] if empty_zero else [0]
-
-    def spreadsheet_column(idx):
-        return ''.join([ chr(ord('A')+digit) for digit in digits(idx, 26) ])
-
-    X = sparse.random(R, C, format="csc", density=0.1, random_state=123)
-
-    obs = DF([
-        {
-            'label': f'row {r}',
-            'idx²': r**2,
-            'Prime': all([
-                r % f != 0
-                for f in range(2, floor(sqrt(r)))
-            ]),
-        }
-        for r in range(R)
-    ])
-
-    var = DF([
-        {
-            'name': spreadsheet_column(c),
-            'sqrt(idx)': sqrt(c),
-        }
-        for c in range(C)
-    ])
-
-    ad = AnnData(X=X, obs=obs, var=var)
-    return ad
-
+from anndata import read_h5ad
+from .utils.data import make_test_h5ad
+from .utils.eq import eq
+from .utils.obj import Obj
 
 new_path = Path.cwd() / 'new.h5ad'
 old_path = Path.cwd() / 'old.h5ad'  # written by running `make_test_h5ad` in AnnData 0.6.22
@@ -131,56 +59,31 @@ def test_cmp_new_old_h5ad(dask):
     #     ad.write_h5ad(path)
 
 
-from multipledispatch import dispatch
-
-
-from scipy.sparse import spmatrix
-@dispatch(spmatrix, spmatrix)
-def eq(l, r): assert (l != r).nnz == 0
-
-
-from anndata._io.h5ad import SparseDataset
-from dask.array import Array
-@dispatch(SparseDataset, Array)
-def eq(l, r): eq(l.value, r.compute())
-
-
-from pandas import DataFrame as DF
-from dask.dataframe import DataFrame as DDF
-from pandas.testing import assert_frame_equal
-@dispatch(DF, DDF)
-def eq(l, r): assert_frame_equal(l, r.compute())
-
-
 @pytest.mark.parametrize('path', [old_path, new_path])
 def test_dask_load(path):
     ad1 = read_h5ad(path, backed='r', dask=False)
     ad2 = read_h5ad(path, backed='r', dask= True)
 
-    eq(ad1.X, ad2.X)
-    eq(ad1.obs, ad2.obs)
-    eq(ad1.var, ad2.var)
+    @singledispatch
+    def check(fn):
+        if callable(fn):
+            eq(fn(ad1), fn(ad2))
+        else:
+            raise NotImplementedError
 
-    # TODO: obsm, varm, obsp, varp, uns, layers, raw
+    @check.register(tuple)
+    def _(args):
+        for arg in args:
+            check(arg)
 
+    @check.register(str)
+    def _(k):
+        eq(
+            getattr(ad1, k),
+            getattr(ad2, k)
+        )
 
-from anndata._io.h5chunk import Chunk, Range
-
-
-def test_pos():
-    arr = array([ int(str(i)*2) for i in range(100) ])
-    chunk = Chunk.whole_array(arr)
-    ranges = chunk.ranges
-    assert ranges == (Range(0, 0, 100, 100, 1),)
-
-    R = 20
-    C = 20
-    arr = array([
-        [ R*r+c for c in range(C) ]
-        for r in range(R)
-    ])
-    chunk = Chunk.build((2, 3), ((4, 6), (12, 16)), (R, C))
-    assert chunk == Chunk((
-        Range(2,  4,  6, R, C),
-        Range(3, 12, 16, C, 1),
+    check((
+        'X','obs','var',
+        # TODO: obsm, varm, obsp, varp, uns, layers, raw
     ))
