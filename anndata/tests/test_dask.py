@@ -61,7 +61,7 @@ def test_cmp_new_old_h5ad(dask):
 
 @pytest.mark.parametrize('path', [old_path, new_path])
 def test_dask_load(path):
-    ad1 = read_h5ad(path, backed='r', dask=False)
+    ad1 = read_h5ad(path, dask=False)
     ad2 = read_h5ad(path, backed='r', dask= True)
 
     @singledispatch
@@ -87,3 +87,54 @@ def test_dask_load(path):
         'X','obs','var',
         # TODO: obsm, varm, obsp, varp, uns, layers, raw
     ))
+
+    check((
+        lambda ad: ad.X * 2,
+
+        lambda ad: ad.obs.Prime,
+        lambda ad: ad.obs['Prime'],
+        lambda ad: ad.obs[['Prime','idx²']],
+
+        lambda ad: ad.var.name,
+        lambda ad: ad.var['name'],
+        lambda ad: ad.var[['sqrt(idx)','name']],
+
+        lambda ad: ad.X[:],
+        lambda ad: ad.X[:10],
+        lambda ad: ad.X[:20,:20],
+    ))
+
+    # THese are known or believed to not work in Dask today
+    TODO = [
+
+        # iloc'ing row(s)/col(s) mostly does not work out, of the box:
+        lambda ad: ad[:10],
+        lambda ad: ad[:10,:],
+        lambda ad: ad[:10,:10],
+        lambda ad: ad[:10,0],
+
+        lambda ad: ad[:,:10],
+        lambda ad: ad[:10,:10],
+        lambda ad: ad[0,:10],
+
+        lambda ad: ad[10,10],
+
+        lambda ad: ad.obs.loc['2','Prime'],
+
+        # .loc'ing ranges
+        lambda ad: ad.obs.loc[:,:],
+        lambda ad: ad.obs.loc[:,['Prime','label']],
+        lambda ad: ad.obs.loc[:,'label'],
+
+        # Integer ranges don't work in .loc because obs.index holds strs; this is true in non-dask mode, but seems broken
+        lambda ad: ad.obs.loc[:10,:],
+        lambda ad: ad.obs.loc[:10,['Prime','label']],
+        lambda ad: ad.obs.loc[:10,'label'],
+
+        # these work, but Dask returns a DF (to Pandas' Series)
+        lambda ad: ad.obs.loc['10',['Prime','label']],
+        lambda ad: ad.obs.loc['10',:],
+
+        # works, but Dask returns a Series (to Pandas' scalar)
+        lambda ad: ad.obs.loc['10','label'],
+    ]

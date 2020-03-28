@@ -17,3 +17,19 @@ from dask.dataframe import DataFrame as DDF
 from pandas.testing import assert_frame_equal
 @dispatch(DF, DDF)
 def eq(l, r): assert_frame_equal(l, r.compute())
+
+
+@dispatch(spmatrix, Array)
+def eq(l, r): eq(l, r.compute())
+
+
+from pandas import Series
+from pandas.testing import assert_series_equal
+@dispatch(Series, Series)
+def eq(l, r): assert_series_equal(l, r)
+
+
+from dask import dataframe as dd
+from pandas.testing import assert_series_equal
+@dispatch(Series, dd.Series)
+def eq(l, r): eq(l, r.compute())
