@@ -4,6 +4,7 @@ from typing import Any
 
 @dataclass
 class Obj:
+    '''Dict wrapper that supports getattr'''
     dict: Any
     default: Any = None
 

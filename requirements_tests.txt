@@ -8,4 +8,3 @@ sklearn
 xlrd
 joblib
 black
-multipledispatch

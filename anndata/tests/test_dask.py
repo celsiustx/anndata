@@ -5,7 +5,7 @@ import pytest
 
 from anndata import read_h5ad
 from .utils.data import make_test_h5ad
-from .utils.eq import eq
+from .utils.eq import cmp as eq
 from .utils.obj import Obj
 
 new_path = Path.cwd() / 'new.h5ad'
