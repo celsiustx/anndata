@@ -155,7 +155,7 @@ class H5Chunk:
     def ranges(self): return self.pos.ranges
 
     def arr(self):
-        print(f'Opening {self.file} ({self.path}): {self.idx} ({self.slice})')
+        #print(f'Opening {self.file} ({self.path}): {self.idx} ({self.slice})')
         with File(self.file, 'r') as f:
             arr = f[self.path]
             attrs = arr.attrs
@@ -311,7 +311,7 @@ def load_tensor(*, X=None, path=None, name=None, chunk_size = 'auto', to_array=s
         ctx = File(path, 'r')
         X = ctx[name]
 
-    print(f'Loading HDF5 tensor: {path}:{name}: {X}')
+    #print(f'Loading HDF5 tensor: {path}:{name}: {X}')
 
     with ctx:
         chunks = normalize_chunks(chunk_size, X.shape, dtype = X.dtype)
