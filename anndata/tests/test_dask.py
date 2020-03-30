@@ -3,14 +3,17 @@ from pathlib import Path
 
 import pytest
 
+import anndata
 from anndata import read_h5ad
 from .utils.data import make_test_h5ad
 from .utils.eq import cmp as eq
 from .utils.obj import Obj
 
-new_path = Path.cwd() / 'new.h5ad'
-old_path = Path.cwd() / 'old.h5ad'  # written by running `make_test_h5ad` in AnnData 0.6.22
-
+package_root = Path(__file__).parent.parent.parent
+new_path = package_root / 'new.h5ad'
+old_path = package_root / 'old.h5ad'  # written by running `make_test_h5ad` in AnnData 0.6.22
+assert(new_path.exists())
+assert(old_path.exists())
 
 @pytest.mark.parametrize('dask', [True, False])
 def test_cmp_new_old_h5ad(dask):
@@ -88,6 +91,21 @@ def test_dask_load(path):
         # TODO: obsm, varm, obsp, varp, uns, layers, raw
     ))
 
+    # Next OP requires views of dask AnnData to be built differently.
+
+    # This fails:
+    # check(lambda ad: ad[:10])
+
+    # Breakdown:
+    from .utils.eq import normalize
+    v1 = ad1[:10]
+    v2 = ad2[:10]
+    n1 = normalize(v1)
+    n2 = normalize(v2)
+    is_eq = eq(n1, n2) # <- fails here because n2 needs concrete n_obs & n_vars?
+    assert(is_eq)
+
+
     check((
         lambda ad: ad.X * 2,
 
@@ -104,7 +122,7 @@ def test_dask_load(path):
         lambda ad: ad.X[:20,:20],
     ))
 
-    # THese are known or believed to not work in Dask today
+    # These are known or believed to not work in Dask today
     TODO = [
 
         # iloc'ing row(s)/col(s) mostly does not work out, of the box:
