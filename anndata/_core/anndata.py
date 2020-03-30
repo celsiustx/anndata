@@ -362,7 +362,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             var_sub = delayed(lambda var: var.iloc[vidx])(adata_ref.var)
             self._obsm = delayed(lambda obsm: obsm._view(self, (oidx,)))(adata_ref.obsm)
             self._varm = delayed(lambda varm: varm._view(self, (vidx,)))(adata_ref.varm)
-            self._layers = delayed(lambda layers: layers._view(self, (oidx, vidx)))(adata_ref.layers)
+            self._layers = delayed(lambda layers: layers._view(self, (oidx, vidx)))(adata_ref.layers) # check this (ssmith)
             self._obsp = delayed(lambda obsp: obsp._view(self, oidx))(adata_ref.obsp)
             self._varp = delayed(lambda varp: varp._view(self, vidx))(adata_ref.varp)
             # Special case for old neighbors, backwards compat. Remove in anndata 0.8.
@@ -388,9 +388,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
         # set attributes
         if dask:
-            self._obs = delayed(lambda obs_sub, that: DataFrameView(obs_sub, view_args=(that, "obs")))(obs_sub, self)
-            self._var = delayed(lambda var_sub, that: DataFrameView(var_sub, view_args=(that, "var")))(var_sub, self)
-            self._uns = delayed(lambda uns_new, that: DictView(uns_new, view_args=(that, "uns")))(uns_new, self)
+            self._obs = delayed(lambda obs_sub, self: DataFrameView(obs_sub, view_args=(self, "obs")))(obs_sub)
+            self._var = delayed(lambda var_sub, self: DataFrameView(var_sub, view_args=(self, "var")))(var_sub)
+            self._uns = delayed(lambda uns_new, self: DictView(uns_new, view_args=(self, "uns")))(uns_new)
             self._n_obs = delayed(lambda obs: len(obs))(self.obs) # can this be calculated?
             self._n_vars = delayed(lambda vars: len(vars))(self.var) # can this be calculated?
         else:
