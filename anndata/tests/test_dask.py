@@ -9,7 +9,7 @@ from .utils.data import make_test_h5ad
 from .utils.eq import cmp as eq
 from .utils.obj import Obj
 
-package_root = Path(__file__).parent.parent.parent
+package_root = Path(anndata.__file__).parent.parent
 new_path = package_root / 'new.h5ad'
 old_path = package_root / 'old.h5ad'  # written by running `make_test_h5ad` in AnnData 0.6.22
 assert(new_path.exists())
