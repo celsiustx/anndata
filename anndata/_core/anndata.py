@@ -356,20 +356,38 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         self._vidx = vidx
         # the file is the same as of the reference object
         self.file = adata_ref.file
+
+        kw = dict(pure=True)
+
         # views on attributes of adata_ref
         if dask:
-            obs_sub = delayed(lambda obs: obs.iloc[oidx])(adata_ref.obs)
-            var_sub = delayed(lambda var: var.iloc[vidx])(adata_ref.var)
-            self._obsm = delayed(lambda obsm: obsm._view(self, (oidx,)))(adata_ref.obsm)
-            self._varm = delayed(lambda varm: varm._view(self, (vidx,)))(adata_ref.varm)
-            self._layers = delayed(lambda layers: layers._view(self, (oidx, vidx)))(adata_ref.layers) # check this (ssmith)
-            self._obsp = delayed(lambda obsp: obsp._view(self, oidx))(adata_ref.obsp)
-            self._varp = delayed(lambda varp: varp._view(self, vidx))(adata_ref.varp)
+            if oidx == slice(None, None, None):
+                # If we didn't slice obs, just return the original.
+                obs_sub = adata_ref.obs
+                n_obs = adata_ref.n_obs
+            else:
+                n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
+                obs_sub = delayed(lambda obs: obs.iloc[oidx], nout=n_obs, **kw)(adata_ref.obs)
+            if vidx == slice(None, None, None):
+                # If we didnt' slice var, just return the original.
+                var_sub = adata_ref.var
+                n_vars = adata_ref.n_vars
+            else:
+                n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
+                var_sub = delayed(lambda var: var.iloc[vidx], nout=n_vars, **kw)(adata_ref.var)
+            self._obsm = delayed(lambda obsm: obsm._view(self, (oidx,)), **kw)(adata_ref.obsm)
+            self._varm = delayed(lambda varm: varm._view(self, (vidx,)), **kw)(adata_ref.varm)
+            self._layers = delayed(lambda layers: layers._view(self, (oidx, vidx)), **kw)(adata_ref.layers) # check this (ssmith)
+            self._obsp = delayed(lambda obsp: obsp._view(self, oidx), **kw)(adata_ref.obsp)
+            self._varp = delayed(lambda varp: varp._view(self, vidx), **kw)(adata_ref.varp)
             # Special case for old neighbors, backwards compat. Remove in anndata 0.8.
             uns_new = delayed(
                         lambda uns, oidx, n_obs:
-                            _slice_uns_sparse_matrices(uns, oidx, n_obs)
+                            _slice_uns_sparse_matrices(uns, oidx, n_obs),
+                        **kw
                       )(adata_ref._uns, self._oidx, adata_ref.n_obs)
+            self._n_obs = n_obs
+            self._n_vars = n_vars
         else:
             obs_sub = adata_ref.obs.iloc[oidx]
             var_sub = adata_ref.var.iloc[vidx]
