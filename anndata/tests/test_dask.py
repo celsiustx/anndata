@@ -91,21 +91,7 @@ def test_dask_load(path):
         # TODO: obsm, varm, obsp, varp, uns, layers, raw
     ))
 
-    # Next OP requires views of dask AnnData to be built differently.
-
-    # This fails:
-    # check(lambda ad: ad[:10])
-
-    # Breakdown:
-    from .utils.eq import normalize
-    v1 = ad1[:10]
-    v2 = ad2[:10]
-    n1 = normalize(v1)
-    n2 = normalize(v2)
-    is_eq = eq(n1, n2) # <- fails here because n2 needs concrete n_obs & n_vars?
-    assert(is_eq)
-
-
+    # Basic support.
     check((
         lambda ad: ad.X * 2,
 
@@ -122,20 +108,23 @@ def test_dask_load(path):
         lambda ad: ad.X[:20,:20],
     ))
 
+    # These work when we add deferred() around all .iloc calls and things that use them.
+    check((
+        lambda ad: ad[:10],
+        lambda ad: ad[:10, :],
+        lambda ad: ad[:10, :10],
+        lambda ad: ad[:10, 0],
+
+        lambda ad: ad[:, :10],
+        lambda ad: ad[:10, :10],
+        lambda ad: ad[0, :10],
+
+        lambda ad: ad[10, 10]
+    ))
+
     # These are known or believed to not work in Dask today
     TODO = [
-
         # iloc'ing row(s)/col(s) mostly does not work out, of the box:
-        lambda ad: ad[:10],
-        lambda ad: ad[:10,:],
-        lambda ad: ad[:10,:10],
-        lambda ad: ad[:10,0],
-
-        lambda ad: ad[:,:10],
-        lambda ad: ad[:10,:10],
-        lambda ad: ad[0,:10],
-
-        lambda ad: ad[10,10],
 
         lambda ad: ad.obs.loc['2','Prime'],
 
