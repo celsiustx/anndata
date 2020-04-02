@@ -400,23 +400,23 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             uns_new = _slice_uns_sparse_matrices(
                 adata_ref._uns, self._oidx, adata_ref.n_obs
             )
+            self._n_obs = len(obs_sub)
+            self._n_vars = len(var_sub)
+
         # fix categories
         self._remove_unused_categories(adata_ref.obs, obs_sub, uns_new)
         self._remove_unused_categories(adata_ref.var, var_sub, uns_new)
 
         # set attributes
         if dask:
-            self._obs = delayed(lambda obs_sub, self: DataFrameView(obs_sub, view_args=(self, "obs")))(obs_sub)
-            self._var = delayed(lambda var_sub, self: DataFrameView(var_sub, view_args=(self, "var")))(var_sub)
-            self._uns = delayed(lambda uns_new, self: DictView(uns_new, view_args=(self, "uns")))(uns_new)
-            self._n_obs = delayed(lambda obs: len(obs))(self.obs) # can this be calculated?
-            self._n_vars = delayed(lambda vars: len(vars))(self.var) # can this be calculated?
+            self._obs = delayed(lambda obs_sub, self: DataFrameView(obs_sub, view_args=(self, "obs")), **kw)(obs_sub, self)
+            self._var = delayed(lambda var_sub, self: DataFrameView(var_sub, view_args=(self, "var")), **kw)(var_sub, self)
+            self._uns = delayed(lambda uns_new, self: DictView(uns_new, view_args=(self, "uns")), **kw)(uns_new, self)
         else:
             self._obs = DataFrameView(obs_sub, view_args=(self, "obs"))
             self._var = DataFrameView(var_sub, view_args=(self, "var"))
             self._uns = DictView(uns_new, view_args=(self, "uns"))
-            self._n_obs = len(self.obs)
-            self._n_vars = len(self.var)
+
 
         # set data
         if self.isbacked:
