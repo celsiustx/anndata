@@ -625,8 +625,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 X = SparseDataset(X)
 
             if self._dask:
-                from anndata._io.h5chunk import load_tensor
-                X = load_tensor(X=X, chunk_size="8MiB")
+                from anndata._io.dask.hdf5.load_array import load_dask_array
+                X = load_dask_array(X=X, chunk_size="8MiB")
 
             # TODO: This should get replaced/ handled elsewhere
             # This is so that we can index into a backed dense dataset with

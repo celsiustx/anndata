@@ -467,8 +467,8 @@ def read_dataframe_legacy(dataset, dask: bool = False) -> pd.DataFrame:
     """Read pre-anndata 0.7 dataframes."""
     print(f'read_dataframe_legacy: {dataset} (dask {dask})')
     if dask:
-        from .h5chunk import load_dataframe
-        df = load_dataframe(dataset=dataset, index_col=lambda df: df.columns[0])
+        from .dask.hdf5.load_dataframe import load_dask_dataframe
+        df = load_dask_dataframe(dataset=dataset, index_col=lambda df: df.columns[0])
     else:
         df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
         df.set_index(df.columns[0], inplace=True)
@@ -485,8 +485,8 @@ def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
     idx_key = group.attrs["_index"]
     if dask:
         from dask.dataframe import DataFrame
-        from .h5chunk import load_dataframe
-        df = load_dataframe(group=group)
+        from .dask.hdf5.load_dataframe import load_dask_dataframe
+        df = load_dask_dataframe(group=group)
     else:
         df = pd.DataFrame(
             {k: read_series(group[k]) for k in columns},
