@@ -493,7 +493,6 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             self._X = X
             self._n_obs, self._n_vars = self._X.shape
         else:
-            print(f'_init_as_actual: X is None…')
             self._X = None
             self._n_obs = len([] if obs is None else obs)
             self._n_vars = len([] if var is None else var)
@@ -617,7 +616,6 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     def X(self) -> Optional[Union[np.ndarray, sparse.spmatrix, ArrayView]]:
         """Data matrix of shape :attr:`n_obs` × :attr:`n_vars`."""
         if self.isbacked:
-            #print(f'lazy compute X, isbacked…')
             if not self.file.is_open:
                 self.file.open()
             X = self.file["X"]

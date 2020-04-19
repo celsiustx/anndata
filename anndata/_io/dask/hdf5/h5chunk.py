@@ -148,7 +148,6 @@ class H5Chunk:
     def ranges(self): return self.pos.ranges
 
     def arr(self):
-        #print(f'Opening {self.file} ({self.path}): {self.idx} ({self.slice})')
         with File(self.file, 'r') as f:
             arr = f[self.path]
             attrs = arr.attrs
@@ -166,7 +165,6 @@ class H5Chunk:
                 sparse_format = attrs['sparse_format']
                 from anndata._core.sparse_dataset import get_memory_class
                 mtx_class = get_memory_class(sparse_format)
-                print(f'Converting chunk to sparse format: {sparse_format}')
                 chunk = mtx_class(chunk)
 
             return chunk
