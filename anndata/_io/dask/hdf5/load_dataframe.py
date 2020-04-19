@@ -19,7 +19,9 @@ def get_slice(path, name, start, end, columns, index_col=None):
     with File(path, 'r') as f:
         obj = f[name]
 
-        if index_col and index_col not in columns:
+        if index_col and \
+            isinstance(index_col, str) and \
+            index_col not in columns:
             columns = [index_col] + columns
 
         if isinstance(obj, Group):
