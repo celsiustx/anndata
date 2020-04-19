@@ -47,6 +47,9 @@ def test_dask_array_hdf5_load():
         assert chunk_ranges == [ M/m, N/n ]
 
 
+# Dask `compute()`s that pool multiple sparse-matrix chunks require this, otherwise Dask
+# will attempt to combine computed chunks' values into one ndarray, and raise a
+# ValueError ("setting an array element with a sequence", in dask.array.core.concatenate3)
 from dask.array.backends import register_scipy_sparse
 register_scipy_sparse()
 
