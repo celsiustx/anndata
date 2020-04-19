@@ -14,15 +14,16 @@ from h5py import File, Group
 from pandas import Categorical, DataFrame as DF
 
 
-def get_slice(path, name, start, end, index_col=None):
+def get_slice(path, name, start, end, columns, index_col=None):
     '''Load rows [start,end) from HDF5 file `path` (group `name`) into a DataFrame'''
     with File(path, 'r') as f:
         obj = f[name]
+
+        if index_col and index_col not in columns:
+            columns = [index_col] + columns
+
         if isinstance(obj, Group):
             group = obj
-            attrs = group.attrs
-            assert 'column-order' in attrs
-            columns = list(attrs['column-order'])
             def get_series(k):
                 v = group[k]
                 attrs = v.attrs
@@ -36,7 +37,7 @@ def get_slice(path, name, start, end, index_col=None):
             df = DF({ k: get_series(k) for k in columns })
         else:
             dataset = obj
-            df = DF(dataset[start:end])
+            df = DF(dataset[start:end])[columns]
 
         if index_col is not None:
             if isinstance(index_col, str):
@@ -49,15 +50,21 @@ def get_slice(path, name, start, end, index_col=None):
         return df
 
 
-def load_dask_dataframe(*, dataset=None, group=None, path=None, name=None, chunk_size=2 ** 20, index_col=None, ):
+def load_dask_dataframe(
+    *,
+    dataset=None, group=None,
+    path=None, key=None,
+    chunk_size=2 ** 20,
+    index_col=None, columns=None, require_columns=True,
+):
     obj = dataset or group
     if obj:
         ctx = nullcontext()
         path = obj.file.filename
-        name = obj.name
+        key = obj.name
     else:
         ctx = File(path, 'r')
-        obj = ctx[name]
+        obj = ctx[key]
         if isinstance(obj, Group):
             group = obj
         else:
@@ -65,12 +72,24 @@ def load_dask_dataframe(*, dataset=None, group=None, path=None, name=None, chunk
 
     with ctx:
         if group:
-            cols = list(group.attrs['column-order'])
+            if not columns:
+                if 'column-order' in group.attrs:
+                    columns = list(group.attrs['column-order'])
+                elif not require_columns:
+                    columns = list(group.keys())
+                else:
+                    raise ValueError(f'Loading Dask Dataframe from {path}:{key}: column list required but not provided, and no "column-order" attribute found')
             #idx_key = group.attrs["_index"]  # TODO: use this / set index col correctly?
-            itemsize = sum([ group[k].dtype.itemsize for k in cols ])
-            [ (size,) ] = set([ group[k].shape for k in cols ])
+            itemsize = sum([ group[k].dtype.itemsize for k in columns ])
+            [ (size,) ] = set([ group[k].shape for k in columns ])
         else:
-            itemsize = dataset.dtype.itemsize
+            dtype = dataset.dtype
+            all_cols = list(dtype.fields.keys())
+            if columns:
+                columns = [ col for col in all_cols if col in set(columns) ]
+            else:
+                columns = all_cols
+            itemsize = dtype.itemsize
             (size,) = dataset.shape
 
         n_bytes = itemsize * size
@@ -79,7 +98,7 @@ def load_dask_dataframe(*, dataset=None, group=None, path=None, name=None, chunk
         chunk_slices = list(zip(chunk_starts, chunk_starts[1:] + [size]))
 
     chunks = [
-        delayed(get_slice)(path, name, start, end, index_col)
+        delayed(get_slice)(path, key, start, end, columns=columns, index_col=index_col)
         for start, end in chunk_slices
     ]
 

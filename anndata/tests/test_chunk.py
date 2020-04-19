@@ -3,10 +3,13 @@ from tempfile import NamedTemporaryFile
 from h5py import File
 from numpy import array, random
 from numpy.testing import assert_equal
+from pandas.testing import assert_frame_equal, assert_index_equal
 from scipy import sparse
 
 from anndata._io.dask.hdf5.h5chunk import Chunk, Range
 from anndata._io.dask.hdf5.load_array import load_dask_array
+from anndata._io.dask.hdf5.load_dataframe import load_dask_dataframe
+from anndata._io.h5ad import write_dataframe
 
 
 def test_chunk():
@@ -60,7 +63,7 @@ def test_dask_array_hdf5_load_sparse():
     format = 'csr'
     arr = sparse.random(M, N, density=density, format=format)
 
-    m, n =  50,  100
+    m, n = 50, 100
     chunk_size = (m, n)
 
     with NamedTemporaryFile() as tmp:
@@ -79,3 +82,51 @@ def test_dask_array_hdf5_load_sparse():
 
         chunk_ranges = [ len(dim) for dim in da.chunks ]
         assert chunk_ranges == [ M/m, N/n ]
+
+
+def test_dask_dataframe_hdf5_load_group():
+    from anndata.tests.utils.data import make_obs
+    df = make_obs(1000)
+    df.index.name = '_index'
+    itemsize = df.index.dtype.itemsize + sum([ v.dtype.itemsize for _,v in df.items() ])
+    total_size = len(df) * itemsize
+    num_chunks = 10
+    chunk_size = total_size // num_chunks
+    with NamedTemporaryFile() as tmp:
+        path = tmp.name
+        key = 'df'
+        with File(path, 'w') as f:
+            write_dataframe(f, key, df)
+
+        ddf = load_dask_dataframe(path=path, key=key, chunk_size=chunk_size, index_col='_index')
+        assert ddf.index.name == df.index.name
+        assert ddf.index.dtype == df.index.dtype
+
+        assert_index_equal(ddf.columns, df.columns)
+        assert_frame_equal(ddf.compute(), df)
+
+
+def test_dask_dataframe_hdf5_load_dataset():
+    from anndata.tests.utils.data import make_obs
+    df = make_obs(1000)
+    df.index.name = '_index'
+
+    from anndata.tests.utils.df_recarray import df_to_records_fixed_width
+    arr = df_to_records_fixed_width(df)[0]
+
+    itemsize = arr.dtype.itemsize
+    total_size = len(df) * itemsize
+    num_chunks = 10
+    chunk_size = total_size // num_chunks
+    with NamedTemporaryFile() as tmp:
+        path = tmp.name
+        key = 'df'
+        with File(path, 'w') as f:
+            f[key] = arr
+
+        ddf = load_dask_dataframe(path=path, key=key, chunk_size=chunk_size, index_col='_index')
+        assert ddf.index.name == df.index.name
+        assert ddf.index.dtype == df.index.dtype
+
+        assert_index_equal(ddf.columns, df.columns)
+        assert_frame_equal(ddf.compute(), df)
