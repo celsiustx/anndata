@@ -57,6 +57,29 @@ def load_dask_dataframe(
     chunk_size=2 ** 20,
     index_col=None, columns=None, require_columns=True,
 ):
+    '''Load a Dask DataFrame from HDF5
+
+    Pass in either:
+    - an h5py.Dataset
+    - an h5py.Group
+    - a `path` to an HDF5 file (and `key` to a Dataset or Group inside that path)
+
+    Datasets vs. Groups:
+    - When loading a Dataset, a numpy recarray format is assumed.
+    - When loading a Group, multiple equal-length Datasets (each corresponding to a
+      Series) are assumed.
+
+    Selecting columns:
+    - If desired, select specific columns via the `columns` argument
+    - If `columns` is omitted, a `column-order` group attr will be used to determine
+      columns (and order)
+    - If all Datasets in a Group should be loaded as Series, and the order doesn't
+      matter, require_columns=False can be specified (normally this state will raise an
+      error)
+    '''
+    if dataset and group:
+        raise ValueError(f'Provide at most one of {"dataset","group"}')
+
     obj = dataset or group
     if obj:
         ctx = nullcontext()
@@ -79,7 +102,6 @@ def load_dask_dataframe(
                     columns = list(group.keys())
                 else:
                     raise ValueError(f'Loading Dask Dataframe from {path}:{key}: column list required but not provided, and no "column-order" attribute found')
-            #idx_key = group.attrs["_index"]  # TODO: use this / set index col correctly?
             itemsize = sum([ group[k].dtype.itemsize for k in columns ])
             [ (size,) ] = set([ group[k].shape for k in columns ])
         else:
