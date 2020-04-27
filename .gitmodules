@@ -1,0 +1,6 @@
+[submodule "scanpy"]
+	path = scanpy
+	url = git@github.com:celsiustx/scanpy.git
+[submodule "dask"]
+	path = dask
+	url = git@github.com:ryan-williams/dask.git
