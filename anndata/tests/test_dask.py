@@ -3,14 +3,17 @@ from pathlib import Path
 
 import pytest
 
+import anndata
 from anndata import read_h5ad
 from .utils.data import make_test_h5ad
 from .utils.eq import cmp as eq
 from .utils.obj import Obj
 
-new_path = Path.cwd() / 'new.h5ad'
-old_path = Path.cwd() / 'old.h5ad'  # written by running `make_test_h5ad` in AnnData 0.6.22
-
+package_root = Path(anndata.__file__).parent.parent
+new_path = package_root / 'new.h5ad'
+old_path = package_root / 'old.h5ad'  # written by running `make_test_h5ad` in AnnData 0.6.22
+assert(new_path.exists())
+assert(old_path.exists())
 
 @pytest.mark.parametrize('dask', [True, False])
 def test_cmp_new_old_h5ad(dask):
@@ -88,6 +91,7 @@ def test_dask_load(path):
         # TODO: obsm, varm, obsp, varp, uns, layers, raw
     ))
 
+    # Basic support.
     check((
         lambda ad: ad.X * 2,
 
@@ -104,20 +108,23 @@ def test_dask_load(path):
         lambda ad: ad.X[:20,:20],
     ))
 
-    # THese are known or believed to not work in Dask today
-    TODO = [
-
-        # iloc'ing row(s)/col(s) mostly does not work out, of the box:
+    # These work when we add deferred() around all .iloc calls and things that use them.
+    check((
         lambda ad: ad[:10],
-        lambda ad: ad[:10,:],
-        lambda ad: ad[:10,:10],
-        lambda ad: ad[:10,0],
+        lambda ad: ad[:10, :],
+        lambda ad: ad[:10, :10],
+        lambda ad: ad[:10, 0],
 
-        lambda ad: ad[:,:10],
-        lambda ad: ad[:10,:10],
-        lambda ad: ad[0,:10],
+        lambda ad: ad[:, :10],
+        lambda ad: ad[:10, :10],
+        lambda ad: ad[0, :10],
 
-        lambda ad: ad[10,10],
+        lambda ad: ad[10, 10]
+    ))
+
+    # These are known or believed to not work in Dask today
+    TODO = [
+        # iloc'ing row(s)/col(s) mostly does not work out, of the box:
 
         lambda ad: ad.obs.loc['2','Prime'],
 
