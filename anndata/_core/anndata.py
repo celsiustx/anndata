@@ -42,6 +42,7 @@ from .views import (
     as_view,
     _resolve_idxs,
 )
+from .merge import merge_uns
 from .sparse_dataset import SparseDataset
 from .. import utils
 from ..utils import convert_to_dict, ensure_df_homogeneous
@@ -858,7 +859,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         getattr(self, attr).index = value
         for v in getattr(self, f"{attr}m").values():
             if isinstance(v, pd.DataFrame):
-                v.index = value.copy()
+                v.index = value
 
     @property
     def obs(self) -> pd.DataFrame:
@@ -1496,6 +1497,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         join: str = "inner",
         batch_key: str = "batch",
         batch_categories: Sequence[Any] = None,
+        uns_merge: Optional[str] = None,
         index_unique: Optional[str] = "-",
     ) -> "AnnData":
         """\
@@ -1516,6 +1518,16 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             Add the batch annotation to :attr:`obs` using this key.
         batch_categories
             Use these as categories for the batch annotation. By default, use increasing numbers.
+        uns_merge
+            Strategy to use for merging entries of uns. These strategies are applied recusivley.
+            Currently implemented strategies include:
+
+            * `None`: The default. The concatenated object will just have an empty dict for `uns`.
+            * `"same"`: Only entries which have the same value in all AnnData objects are kept.
+            * `"unique"`: Only entries which have one unique value in all AnnData objects are kept.
+            * `"first"`: The first non-missing value is used.
+            * `"only"`: A value is included if only one of the AnnData objects has a value at this
+              path.
         index_unique
             Make the index unique by joining the existing index names with the
             batch category, using `index_unique='-'`, for instance. Provide
@@ -1885,10 +1897,13 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                     sparse_format_l = sparse_layers[0].getformat()
                     layers[key] = layers[key].asformat(sparse_format_l)
 
+        # New uns
+        uns = merge_uns([a.uns for a in all_adatas], uns_merge)
+
         new_adata = (
-            AnnData(X, obs, var, obsm=obsm, layers=layers)
+            AnnData(X, obs, var, obsm=obsm, layers=layers, uns=uns)
             if join == "inner"
-            else AnnData(X, obs, var, obsm=obsm)
+            else AnnData(X, obs, var, obsm=obsm, uns=uns)
         )
 
         # raw
@@ -1914,12 +1929,14 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         return new_adata
 
     def var_names_make_unique(self, join: str = "-"):
-        self.var.index = utils.make_index_unique(self.var.index, join)
+        # Important to go through the setter so obsm dataframes are updated too
+        self.var_names = utils.make_index_unique(self.var.index, join)
 
     var_names_make_unique.__doc__ = utils.make_index_unique.__doc__
 
     def obs_names_make_unique(self, join: str = "-"):
-        self.obs.index = utils.make_index_unique(self.obs.index, join)
+        # Important to go through the setter so obsm dataframes are updated too
+        self.obs_names = utils.make_index_unique(self.obs.index, join)
 
     obs_names_make_unique.__doc__ = utils.make_index_unique.__doc__
 
