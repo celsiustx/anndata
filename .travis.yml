@@ -12,6 +12,8 @@ python:
   - "3.6"
   - "3.7"
 install:
+  - "git submodule update --init"
+  - "pip install -r requirements_celsiustx.txt"
   - "pip install -r requirements.txt"
   - "pip install -r requirements_tests.txt"
   - "pip install docutils"
