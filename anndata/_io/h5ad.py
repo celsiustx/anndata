@@ -336,8 +336,6 @@ def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"], dask:
     _clean_uns(d, dask)
     d['dask'] = dask
 
-    print(f'Calling ctor: {list(d.keys())}')
-
     return AnnData(**d)
 
 
@@ -464,10 +462,9 @@ def _read_raw(
 @report_read_key_on_error
 def read_dataframe_legacy(dataset, dask: bool = False) -> pd.DataFrame:
     """Read pre-anndata 0.7 dataframes."""
-    print(f'read_dataframe_legacy: {dataset} (dask {dask})')
     if dask:
-        from .h5chunk import load_dataframe
-        df = load_dataframe(dataset=dataset, index_col=lambda df: df.columns[0])
+        from .dask.hdf5.load_dataframe import load_dask_dataframe
+        df = load_dask_dataframe(dataset=dataset, index_col=lambda df: df.columns[0])
     else:
         df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
         df.set_index(df.columns[0], inplace=True)
@@ -479,13 +476,12 @@ def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
     if not isinstance(group, h5py.Group):
         return read_dataframe_legacy(group, dask)
 
-    print(f'read_dataframe (new): {group} (dask {dask})')
     columns = list(group.attrs["column-order"])
     idx_key = group.attrs["_index"]
     if dask:
         from dask.dataframe import DataFrame
-        from .h5chunk import load_dataframe
-        df = load_dataframe(group=group)
+        from .dask.hdf5.load_dataframe import load_dask_dataframe
+        df = load_dask_dataframe(group=group)
     else:
         df = pd.DataFrame(
             {k: read_series(group[k]) for k in columns},
