@@ -1,3 +1,4 @@
+from dask.base import DaskMethodsMixin
 from functools import singledispatch
 
 
@@ -6,7 +7,6 @@ def normalize(o):
     '''Optionally convert an object to another, more canonical type (for
     equality-assertions)'''
     return o
-
 
 from dask.array import Array
 @normalize.register(Array)
@@ -38,38 +38,52 @@ def eq(l, r):
         raise NotImplementedError(f'l: {l} ({type(l)}), r {r} ({type(r)}), result: {result} ({type(result)})')
     assert l == r
 
+from numpy import bool_
+@eq.register(bool_)
+def _(l, r):
+    assert l == r
+
 
 from numpy import float32
 @eq.register(float32)
 def _(l, r): assert l == r
 
-
 from scipy.sparse import spmatrix
 @eq.register(spmatrix)
-def _(l, r): assert (l != r).nnz == 0
-
+def _(l, r):
+    if isinstance(r, DaskMethodsMixin):
+        r = r.compute()
+    assert((l != r).nnz == 0)
 
 from pandas import DataFrame as DF
 from pandas.testing import assert_frame_equal
 @eq.register(DF)
-def _(l, r): assert_frame_equal(l, r)
+def _(l, r):
+    if isinstance(r, DaskMethodsMixin):
+        r = r.compute()
+    assert_frame_equal(l, r)
 
 
 from pandas import Series
 from pandas.testing import assert_series_equal
 @eq.register(Series)
-def _(l, r): assert_series_equal(l, r)
+def _(l, r):
+    if isinstance(r, DaskMethodsMixin):
+        r = r.compute()
+    assert_series_equal(l, r)
 
 
 from anndata import AnnData
 @eq.register(AnnData)
 def _(l, r):
     for k in ['X','obs','var',]:
-        eq(
-            getattr(l, k),
-            getattr(r, k)
-        )
-
+        lv = getattr(l, k)
+        rv = getattr(r, k)
+        if isinstance(lv, DaskMethodsMixin):
+            lv = lv.compute()
+        if isinstance(rv, DaskMethodsMixin):
+            rv = rv.compute()
+        eq(lv, rv)
 
 def cmp(l, r):
     eq(
