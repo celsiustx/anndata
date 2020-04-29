@@ -24,8 +24,10 @@ jobs:
           pip install --user -r requirements.txt
           pip install --user -r requirements_tests.txt
           pip install --user -e .
+          pip uninstall -y scanpy
       - name: Test with pytest
         run: |
+          mv scanpy/ /tmp/ # Remove this when we get the submodule keys configured.
           export PATH=~/.local/bin:$PATH
           export PYTHONPATH=~/.local/lib:.:$PYTHONPATH
-          pytest -s -vv
+          pytest -s -vvv anndata

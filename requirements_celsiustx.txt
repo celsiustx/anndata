@@ -1,0 +1,5 @@
+# Install these from the current submodule commit so we don't have to
+# formally version while developing.
+-e dask
+-e scanpy
+
