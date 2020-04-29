@@ -3,4 +3,4 @@
 	url = git@github.com:celsiustx/scanpy.git
 [submodule "dask"]
 	path = dask
-	url = git@github.com:ryan-williams/dask.git
+	url = git@github.com:celsiustx/dask.git
