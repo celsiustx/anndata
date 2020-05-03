@@ -234,9 +234,11 @@ def get_backed_class(format_str: str) -> Type[BackedSparseMatrix]:
 class SparseDataset:
     """Analogous to :class:`h5py.Dataset <h5py:Dataset>`, but for sparse matrices."""
 
-    def __init__(self, group: h5py.Group):
+    def __init__(self, group: h5py.Group, format_str: str = None, shape: Tuple[int,int] = None):
         self.group = group
         self.ndim = 2
+        self._format_str = format_str
+        self._shape = shape
 
     @property
     def dtype(self) -> np.dtype:
@@ -244,6 +246,8 @@ class SparseDataset:
 
     @property
     def format_str(self) -> str:
+        if self._format_str:
+            return self._format_str
         if "h5sparse_format" in self.group.attrs:
             return self.group.attrs["h5sparse_format"]
         else:
@@ -269,8 +273,20 @@ class SparseDataset:
 
     @property
     def shape(self) -> Tuple[int, int]:
-        shape = self.group.attrs.get("h5sparse_shape")
-        return tuple(self.group.attrs["shape"] if shape is None else shape)
+        group = self.group
+        attrs = group.attrs
+        if self._shape:
+            shape = self._shape
+        elif "h5sparse_shape" in attrs:
+            shape = attrs["h5sparse_shape"]
+        elif "shape" in attrs:
+            shape = attrs["shape"]
+        elif "shape" in group:
+            shape = group['shape'][:]
+        else:
+            raise ValueError('Shape not found (checked for "h5sparse_shape" or "shape" attrs and a "shape" dataset)')
+
+        return tuple(shape)
 
     @property
     def value(self) -> ss.spmatrix:

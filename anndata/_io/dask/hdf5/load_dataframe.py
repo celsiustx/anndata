@@ -105,7 +105,7 @@ def load_dask_dataframe(
                 else:
                     raise ValueError(f'Loading Dask Dataframe from {path}:{key}: column list required but not provided, and no "column-order" attribute found')
             itemsize = sum([ group[k].dtype.itemsize for k in columns ])
-            [ (size,) ] = set([ group[k].shape for k in columns ])
+            [ (n_rows,) ] = set([ group[k].shape for k in columns ])
         else:
             dtype = dataset.dtype
             all_cols = list(dtype.fields.keys())
@@ -114,12 +114,12 @@ def load_dask_dataframe(
             else:
                 columns = all_cols
             itemsize = dtype.itemsize
-            (size,) = dataset.shape
+            (n_rows,) = dataset.shape
 
-        n_bytes = itemsize * size
+        n_bytes = itemsize * n_rows
         n_chunks = (n_bytes + chunk_size - 1) // chunk_size
-        chunk_starts = [ (i * size // n_chunks) for i in range(n_chunks) ]
-        chunk_slices = list(zip(chunk_starts, chunk_starts[1:] + [size]))
+        chunk_starts = [ (i * n_rows // n_chunks) for i in range(n_chunks) ]
+        chunk_slices = list(zip(chunk_starts, chunk_starts[1:] + [n_rows]))
 
     chunks = [
         delayed(get_slice)(path, key, start, end, columns=columns, index_col=index_col)
@@ -127,4 +127,5 @@ def load_dask_dataframe(
     ]
 
     ddf = from_delayed(chunks)
+    ddf._len = n_rows
     return ddf
