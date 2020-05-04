@@ -104,6 +104,10 @@ def load_dask_dataframe(
                     columns = list(group.keys())
                 else:
                     raise ValueError(f'Loading Dask Dataframe from {path}:{key}: column list required but not provided, and no "column-order" attribute found')
+
+            if index_col and index_col not in columns:
+                columns = [index_col] + columns
+
             itemsize = sum([ group[k].dtype.itemsize for k in columns ])
             [ (n_rows,) ] = set([ group[k].shape for k in columns ])
         else:
@@ -128,4 +132,5 @@ def load_dask_dataframe(
 
     ddf = from_delayed(chunks)
     ddf._len = n_rows
+    ddf.partition_sizes = [ end-start for start, end in chunk_slices ]
     return ddf
