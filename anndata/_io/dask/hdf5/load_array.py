@@ -10,7 +10,7 @@ except ImportError:
 
 from dask.array import Array, from_array
 from dask.array.core import normalize_chunks
-from functools import singledispatch
+from functools import partial, singledispatch
 from h5py import File, Group
 from numpy import array, cumprod, cumsum, empty, result_type, ix_
 from typing import Collection, Tuple
@@ -30,15 +30,16 @@ def cartesian_product(*arrays):
 
 
 @singledispatch
-def sparse_hdf5_group_to_backed_dataset(obj):
+def sparse_hdf5_group_to_backed_dataset(obj, **kwags):
     '''"to_array" adapter for `H5Chunk.arr()`: pass-through by default, but convert `h5py.Group`s to scipy.spmatrix's'''
     return obj
 
+
 @sparse_hdf5_group_to_backed_dataset.register(Group)
-def _(group): return SparseDataset(group).to_backed()
+def _(group, **kwargs): return SparseDataset(group, **kwargs).to_backed()
 
 
-def make_chunk(ranges: Collection[Tuple[int,int]], block_info, shape, record_dtype, range_dtype, ndim, path, _name, to_array):
+def make_chunk(ranges: Collection[Tuple[int,int]], block_info, shape, record_dtype, range_dtype, ndim, path, _name, to_array, to_array_kwargs):
     '''Given a `path` to an HDF5 file, and a list of [start,end) index-pairs (one per dimension), build an `H5Chunk`'''
     block_info = block_info[0]
     block_idxs = block_info['array-location']
@@ -64,7 +65,7 @@ def make_chunk(ranges: Collection[Tuple[int,int]], block_info, shape, record_dty
             record_dtype,
             ndim,
             pos,
-            to_array=to_array
+            to_array=partial(to_array, **to_array_kwargs)
         )
     ) \
     .reshape((1,)*rank)
@@ -75,7 +76,14 @@ def to_arr(chunk, rank):
     return chunk[(0,) * rank].arr()
 
 
-def load_dask_array(*, X=None, path=None, key=None, chunk_size ='auto', to_array=sparse_hdf5_group_to_backed_dataset) -> Array:
+def load_dask_array(
+    *,
+    X=None,
+    path=None, key=None,
+    chunk_size ='auto',
+    to_array=sparse_hdf5_group_to_backed_dataset,
+    **to_array_kwargs
+) -> Array:
     '''Load an HDF5 Dataset (or Group representing a sparse array) as a Dask Array.
 
     An existing HDF5 node `X` can be passed, xor a `path` (to an HDF5 file) and `key` (to load from within that file).
@@ -97,9 +105,8 @@ def load_dask_array(*, X=None, path=None, key=None, chunk_size ='auto', to_array
         X = ctx[key]
 
     if isinstance(X, Group):
-        X = SparseDataset(X)
+        X = SparseDataset(X, **to_array_kwargs)
 
-    #shape = shape or X.shape
     #print(f'Loading HDF5 tensor: {path}:{name}: {X}')
 
     with ctx:
@@ -159,6 +166,7 @@ def load_dask_array(*, X=None, path=None, key=None, chunk_size ='auto', to_array
             path=path,
             _name=key,
             to_array=to_array,
+            to_array_kwargs=to_array_kwargs,
         )
 
         # Expand each block (which each contain a single `H5Chunk`) into the corresponding array:

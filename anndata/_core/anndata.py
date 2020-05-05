@@ -15,6 +15,7 @@ from typing import Any, Union, Optional  # Meta
 from typing import Iterable, Sequence, Mapping, MutableMapping  # Generic ABCs
 from typing import Tuple, List  # Generic
 
+from dask import array as da
 import h5py
 from natsort import natsorted
 import numpy as np
@@ -528,6 +529,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                     X = X.astype(dtype)
             elif isinstance(X, ZarrArray):
                 X = X.astype(dtype)
+            elif isinstance(X, da.Array):
+                print(f'Pass Dask array: {X}')
+                pass
             else:  # is np.ndarray or a subclass, convert to true np.ndarray
                 X = np.array(X, dtype, copy=False)
             # data matrix and shape
@@ -1814,7 +1818,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         if "obs" in key and len(self._obs) != self._n_obs:
             raise ValueError(
                 "Observations annot. `obs` must have number of rows of `X`"
-                f" ({self._n_obs}), but has {self._obs.shape[0]} rows."
+                f" ({self._n_obs}), but has {len(self._obs)} rows (shape {self._obs.shape[0]})."
             )
         if "var" in key and len(self._var) != self._n_vars:
             raise ValueError(

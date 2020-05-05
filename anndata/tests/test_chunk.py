@@ -104,6 +104,7 @@ def test_dask_dataframe_hdf5_load_group():
 
         assert_index_equal(ddf.columns, df.columns)
         assert_frame_equal(ddf.compute(), df)
+        assert ddf.partition_sizes == [100]*10
 
 
 def test_dask_dataframe_hdf5_load_dataset():
