@@ -340,7 +340,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index, dask: bool = False):
         from anndata._io.dask.utils import is_dask, daskify_call, daskify_method_call,\
-            daskify_iloc, daskify_get_size
+            daskify_iloc, daskify_get_len_given_slice
 
         if adata_ref.isbacked and adata_ref.is_view:
             raise ValueError(
@@ -372,7 +372,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 obs_sub = adata_ref.obs
             else:
                 if is_dask(oidx) or is_dask(adata_ref.n_obs):
-                    n_obs = daskify_get_size(oidx, adata_ref.n_obs)
+                    n_obs = daskify_get_len_given_slice(oidx, adata_ref.n_obs)
                 else:
                     n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
                 obs_sub = daskify_iloc(adata_ref.obs, oidx)
@@ -383,7 +383,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 n_vars = adata_ref.n_vars
             else:
                 if is_dask(vidx) or is_dask(adata_ref.n_vars):
-                    n_vars = daskify_get_size(vidx, adata_ref.n_vars)
+                    n_vars = daskify_get_len_given_slice(vidx, adata_ref.n_vars)
                 else:
                     n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
                 var_sub = daskify_iloc(adata_ref.var, vidx)
