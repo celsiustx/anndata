@@ -143,6 +143,23 @@ def _subset(a: Union[np.ndarray, spmatrix, pd.DataFrame], subset_idx: Index):
         subset_idx = np.ix_(*subset_idx)
     return a[subset_idx]
 
+@_subset.register(da.Array)
+def _subset_dask_array(a: da.Array, idx: Index):
+    from anndata._io.dask.utils import daskify_call_return_array, daskify_calc_shape, is_dask, daskify_call
+    new_shape = daskify_calc_shape(a.shape, idx)
+    if any(is_dask(v) for v in new_shape):
+        return daskify_call(_subset, a, idx)
+    else:
+        # This only works if the shape is fully computed.
+        return daskify_call_return_array(_subset, a, idx,
+                                         _dask_shape=new_shape,
+                                         _dask_dtype=a.dtype,
+                                         _dask_meta=a._meta)
+
+@_subset.register(dask_base.DaskMethodsMixin)
+def _subset_dask_general(a: dask_base.DaskMethodsMixin, subset_idx: Index):
+    from anndata._io.dask.utils import daskify_call
+    return daskify_call(_subset, subset_idx)
 
 @_subset.register(pd.DataFrame)
 def _subset_df(df: pd.DataFrame, subset_idx: Index):

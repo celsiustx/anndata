@@ -53,6 +53,7 @@ from ..compat import (
     ZarrArray,
     ZappyArray,
     DaskArray,
+    DaskDelayed,
     Literal,
     _slice_uns_sparse_matrices,
     _move_adj_mtx,
@@ -68,11 +69,12 @@ class StorageType(Enum):
     ZarrArray = ZarrArray
     ZappyArray = ZappyArray
     DaskArray = DaskArray
+    DaskDelayed = (DaskDelayed,) # Required b/c this is a function and cannot be in an Enum directly
 
     @classmethod
     def classes(cls):
-        return tuple(c.value for c in cls.__members__.values())
-
+        return tuple(c.value[0] if isinstance(c.value, tuple) else c.value
+                     for c in cls.__members__.values())
 
 # for backwards compat
 def _find_corresponding_multicol_key(key, keys_multicol):
@@ -377,7 +379,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                     n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
                 obs_sub = daskify_iloc(adata_ref.obs, oidx)
 
-            if (not is_dask(oidx)) and vidx == slice(None, None, None):
+            if (not is_dask(vidx)) and vidx == slice(None, None, None):
                 # If we didnt' slice var, just return the original.
                 var_sub = adata_ref.var
                 n_vars = adata_ref.n_vars
@@ -388,8 +390,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                     n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
                 var_sub = daskify_iloc(adata_ref.var, vidx)
 
-            self._obsm = daskify_iloc(adata_ref.obsm, oidx)
-            self._varm = daskify_iloc(adata_ref.varm, vidx)
+            self._obsm = daskify_method_call(adata_ref.obsm, "iloc", oidx)
+            self._varm = daskify_method_call(adata_ref.obsm, "iloc", oidx)
             self._layers = daskify_method_call(adata_ref.layers, "_view", self, (oidx, vidx))
             self._obsp = daskify_method_call(adata_ref.obsp, "_view", self, oidx)
             self._varp = daskify_method_call(adata_ref.varp, "_view", self, vidx)
@@ -465,6 +467,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         fd=None,
         dask=False,
     ):
+        from anndata._io.dask.utils import is_dask
+
         # view attributes
         self._is_view = False
         self._adata_ref = None
@@ -542,7 +546,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                     X = X.astype(dtype)
             elif isinstance(X, ZarrArray):
                 X = X.astype(dtype)
-            elif isinstance(X, da.Array):
+            elif is_dask(X):
                 print(f'Pass Dask array: {X}')
                 pass
             else:  # is np.ndarray or a subclass, convert to true np.ndarray
@@ -622,6 +626,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         return size
 
     def _gen_repr(self, n_obs, n_vars) -> str:
+        from anndata._io.dask.utils import is_dask
+
         if self.isbacked:
             backed_at = f"backed at {str(self.filename)!r}"
         else:
@@ -638,7 +644,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             "varp",
         ]:
             obj = getattr(self, attr)
-            if hasattr(obj, 'keys'):
+            if is_dask(obj):
+                descr += f"\n    {attr}: {str(obj)}"
+            elif hasattr(obj, 'keys'):
                 keys = getattr(self, attr).keys()
                 if len(keys) > 0:
                     descr += f"\n    {attr}: {str(list(keys))[1:-1]}"
@@ -967,7 +975,13 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         """Unstructured annotation (ordered dictionary)."""
         uns = _overloaded_uns(self)
         if self.is_view:
-            uns = DictView(uns, view_args=(self, "uns"))
+            from anndata._io.dask.utils import is_dask, daskify_call
+            if self._dask or is_dask(uns):
+                def uns_to_dictview(uns_, anndata):
+                    return DictView(uns_, view_args=(anndata, "uns"))
+                uns = daskify_call(uns_to_dictview, uns, self)
+            else:
+                uns = DictView(uns, view_args=(self, "uns"))
         return uns
 
     @uns.setter
@@ -1501,6 +1515,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
     def copy(self, filename: Optional[PathLike] = None) -> "AnnData":
         """Full copy, optionally on disk."""
+        from anndata._io.dask.utils import is_dask, daskify_method_call
         if not self.isbacked:
             if self.is_view:
                 # TODO: How do I unambiguously check if this is a copy?
@@ -1513,7 +1528,15 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             # TODO: Figure out what case this is:
             if X is not None:
                 dtype = X.dtype
-                if X.shape != self.shape:
+                if (not (X.shape is self.shape)) and (is_dask(X.shape) or is_dask(self.shape)):
+                    def x_reshape(X, Xshape, anndata_shape):
+                        # This is a little ugly b/c we need the X.shape to compute
+                        # before we work on the X that has it.
+                        X.shape = Xshape
+                        X.reshape(anndata_shape)
+                    from anndata._io.dask.utils import daskify_call
+                    X = daskify_call(x_reshape, X, X.shape, self.shape)
+                elif X.shape != self.shape:
                     X = X.reshape(self.shape)
             else:
                 dtype = "float32"
