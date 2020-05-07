@@ -232,7 +232,7 @@ ZARR_WRITE_REGISTRY = {
 }
 
 
-def read_zarr(store: Union[str, Path, MutableMapping, zarr.Group]) -> AnnData:
+def read_zarr(store: Union[str, Path, MutableMapping, zarr.Group], dask: bool = False) -> AnnData:
     """\
     Read from a hierarchical Zarr array store.
 
@@ -255,9 +255,9 @@ def read_zarr(store: Union[str, Path, MutableMapping, zarr.Group]) -> AnnData:
         else:  # Base case
             d[k] = read_attribute(f[k])
 
-    d["raw"] = _read_legacy_raw(f, d.get("raw"), read_dataframe, read_attribute)
+    d["raw"] = _read_legacy_raw(f, d.get("raw"), read_dataframe, read_attribute, dask)
 
-    _clean_uns(d)
+    _clean_uns(d, dask)
 
     return AnnData(**d)
 

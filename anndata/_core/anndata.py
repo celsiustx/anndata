@@ -5,6 +5,8 @@ import warnings
 import collections.abc as cabc
 from collections import OrderedDict
 from copy import deepcopy
+from dask import dataframe as dd
+from dask import delayed
 from enum import Enum
 from functools import reduce, singledispatch
 from pathlib import Path
@@ -13,6 +15,7 @@ from typing import Any, Union, Optional  # Meta
 from typing import Iterable, Sequence, Mapping, MutableMapping  # Generic ABCs
 from typing import Tuple, List  # Generic
 
+from dask import array as da
 import h5py
 from natsort import natsorted
 import numpy as np
@@ -114,6 +117,15 @@ def _gen_dataframe(anno, length, index_names):
 
 
 @_gen_dataframe.register(pd.DataFrame)
+def _(anno, length, index_names):
+    anno = anno.copy()
+    if not is_string_dtype(anno.index):
+        warnings.warn("Transforming to str index.", ImplicitModificationWarning)
+        anno.index = anno.index.astype(str)
+    return anno
+
+
+@_gen_dataframe.register(dd.DataFrame)
 def _(anno, length, index_names):
     anno = anno.copy()
     if not is_string_dtype(anno.index):
@@ -293,8 +305,10 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         shape: Optional[Tuple[int, int]] = None,
         filename: Optional[PathLike] = None,
         filemode: Optional[Literal["r", "r+"]] = None,
+        fd = None,
         asview: bool = False,
         *,
+        dask: bool = False,
         obsp: Optional[Union[np.ndarray, Mapping[str, Sequence[Any]]]] = None,
         varp: Optional[Union[np.ndarray, Mapping[str, Sequence[Any]]]] = None,
         oidx: Index1D = None,
@@ -303,7 +317,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         if asview:
             if not isinstance(X, AnnData):
                 raise ValueError("`X` has to be an AnnData object.")
-            self._init_as_view(X, oidx, vidx)
+            self._init_as_view(X, oidx, vidx, dask=dask)
         else:
             self._init_as_actual(
                 X=X,
@@ -320,9 +334,11 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 varp=varp,
                 filename=filename,
                 filemode=filemode,
+                fd=fd,
+                dask=dask,
             )
 
-    def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
+    def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index, dask: bool = False):
         if adata_ref.isbacked and adata_ref.is_view:
             raise ValueError(
                 "Currently, you cannot index repeatedly into a backed AnnData, "
@@ -342,27 +358,67 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         self._vidx = vidx
         # the file is the same as of the reference object
         self.file = adata_ref.file
+
+        kw = dict(pure=True)
+
         # views on attributes of adata_ref
-        obs_sub = adata_ref.obs.iloc[oidx]
-        var_sub = adata_ref.var.iloc[vidx]
-        self._obsm = adata_ref.obsm._view(self, (oidx,))
-        self._varm = adata_ref.varm._view(self, (vidx,))
-        self._layers = adata_ref.layers._view(self, (oidx, vidx))
-        self._obsp = adata_ref.obsp._view(self, oidx)
-        self._varp = adata_ref.varp._view(self, vidx)
-        # Speical case for old neighbors, backwards compat. Remove in anndata 0.8.
-        uns_new = _slice_uns_sparse_matrices(
-            adata_ref._uns, self._oidx, adata_ref.n_obs
-        )
+        if dask:
+            if oidx == slice(None, None, None):
+                # If we didn't slice obs, just return the original.
+                obs_sub = adata_ref.obs
+                n_obs = adata_ref.n_obs
+            else:
+                n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
+                obs_sub = delayed(lambda obs: obs.iloc[oidx], nout=n_obs, **kw)(adata_ref.obs)
+            if vidx == slice(None, None, None):
+                # If we didnt' slice var, just return the original.
+                var_sub = adata_ref.var
+                n_vars = adata_ref.n_vars
+            else:
+                n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
+                var_sub = delayed(lambda var: var.iloc[vidx], nout=n_vars, **kw)(adata_ref.var)
+            self._obsm = delayed(lambda obsm: obsm._view(self, (oidx,)), **kw)(adata_ref.obsm)
+            self._varm = delayed(lambda varm: varm._view(self, (vidx,)), **kw)(adata_ref.varm)
+            self._layers = delayed(lambda layers: layers._view(self, (oidx, vidx)), **kw)(adata_ref.layers) # check this (ssmith)
+            self._obsp = delayed(lambda obsp: obsp._view(self, oidx), **kw)(adata_ref.obsp)
+            self._varp = delayed(lambda varp: varp._view(self, vidx), **kw)(adata_ref.varp)
+            # Special case for old neighbors, backwards compat. Remove in anndata 0.8.
+            uns_new = delayed(
+                        lambda uns, oidx, n_obs:
+                            _slice_uns_sparse_matrices(uns, oidx, n_obs),
+                        **kw
+                      )(adata_ref._uns, self._oidx, adata_ref.n_obs)
+            self._n_obs = n_obs
+            self._n_vars = n_vars
+        else:
+            obs_sub = adata_ref.obs.iloc[oidx]
+            var_sub = adata_ref.var.iloc[vidx]
+            self._obsm = adata_ref.obsm._view(self, (oidx,))
+            self._varm = adata_ref.varm._view(self, (vidx,))
+            self._layers = adata_ref.layers._view(self, (oidx, vidx))
+            self._obsp = adata_ref.obsp._view(self, oidx)
+            self._varp = adata_ref.varp._view(self, vidx)
+            # Special case for old neighbors, backwards compat. Remove in anndata 0.8.
+            uns_new = _slice_uns_sparse_matrices(
+                adata_ref._uns, self._oidx, adata_ref.n_obs
+            )
+            self._n_obs = len(obs_sub)
+            self._n_vars = len(var_sub)
+
         # fix categories
         self._remove_unused_categories(adata_ref.obs, obs_sub, uns_new)
         self._remove_unused_categories(adata_ref.var, var_sub, uns_new)
+
         # set attributes
-        self._obs = DataFrameView(obs_sub, view_args=(self, "obs"))
-        self._var = DataFrameView(var_sub, view_args=(self, "var"))
-        self._uns = DictView(uns_new, view_args=(self, "uns"))
-        self._n_obs = len(self.obs)
-        self._n_vars = len(self.var)
+        if dask:
+            self._obs = delayed(lambda obs_sub, self: DataFrameView(obs_sub, view_args=(self, "obs")), **kw)(obs_sub, self)
+            self._var = delayed(lambda var_sub, self: DataFrameView(var_sub, view_args=(self, "var")), **kw)(var_sub, self)
+            self._uns = delayed(lambda uns_new, self: DictView(uns_new, view_args=(self, "uns")), **kw)(uns_new, self)
+        else:
+            self._obs = DataFrameView(obs_sub, view_args=(self, "obs"))
+            self._var = DataFrameView(var_sub, view_args=(self, "var"))
+            self._uns = DictView(uns_new, view_args=(self, "uns"))
+
 
         # set data
         if self.isbacked:
@@ -375,6 +431,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             self._raw._adata = self
         else:
             self._raw = None
+
+        self._dask = dask
 
     def _init_as_actual(
         self,
@@ -392,12 +450,15 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         shape=None,
         filename=None,
         filemode=None,
+        fd=None,
+        dask=False,
     ):
         # view attributes
         self._is_view = False
         self._adata_ref = None
         self._oidx = None
         self._vidx = None
+        self._dask = dask
 
         # ----------------------------------------------------------------------
         # various ways of initializing the data
@@ -408,9 +469,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
         # init from file
         if filename is not None:
-            self.file = AnnDataFileManager(self, filename, filemode)
+            self.file = AnnDataFileManager(self, filename, filemode, fd=fd)
         else:
-            self.file = AnnDataFileManager(self, None)
+            self.file = AnnDataFileManager(self, fd=fd)
 
             # init from AnnData
             if isinstance(X, AnnData):
@@ -469,6 +530,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                     X = X.astype(dtype)
             elif isinstance(X, ZarrArray):
                 X = X.astype(dtype)
+            elif isinstance(X, da.Array):
+                print(f'Pass Dask array: {X}')
+                pass
             else:  # is np.ndarray or a subclass, convert to true np.ndarray
                 X = np.array(X, dtype, copy=False)
             # data matrix and shape
@@ -561,9 +625,19 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             "obsp",
             "varp",
         ]:
-            keys = getattr(self, attr).keys()
-            if len(keys) > 0:
-                descr += f"\n    {attr}: {str(list(keys))[1:-1]}"
+            obj = getattr(self, attr)
+            if hasattr(obj, 'keys'):
+                keys = getattr(self, attr).keys()
+                if len(keys) > 0:
+                    descr += f"\n    {attr}: {str(list(keys))[1:-1]}"
+            else:
+                from dask.dataframe import DataFrame
+                if isinstance(obj, DataFrame):
+                    descr += f"\n    {attr}: {str(obj.columns.tolist())[1:-1]}"
+                else:
+                    from sys import stderr
+                    stderr.write(f'Unknown attr type {type(obj)}: {obj}\n')
+
         return descr
 
     def __repr__(self) -> str:
@@ -593,6 +667,11 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             X = self.file["X"]
             if isinstance(X, h5py.Group):
                 X = SparseDataset(X)
+
+            if self._dask:
+                from anndata._io.dask.hdf5.load_array import load_dask_array
+                X = load_dask_array(X=X, chunk_size="8MiB")
+
             # TODO: This should get replaced/ handled elsewhere
             # This is so that we can index into a backed dense dataset with
             # indices that aren’t strictly increasing
@@ -1086,7 +1165,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     def __getitem__(self, index: Index) -> "AnnData":
         """Returns a sliced view of the object."""
         oidx, vidx = self._normalize_indices(index)
-        return AnnData(self, oidx=oidx, vidx=vidx, asview=True)
+        return AnnData(self, oidx=oidx, vidx=vidx, asview=True, dask=self._dask)
 
     def _remove_unused_categories(self, df_full, df_sub, uns):
         from pandas.api.types import is_categorical
@@ -1905,9 +1984,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     obs_names_make_unique.__doc__ = utils.make_index_unique.__doc__
 
     def _check_uniqueness(self):
-        if not self.obs.index.is_unique:
+        if hasattr(self.obs.index, 'is_unique') and not self.obs.index.is_unique:
             utils.warn_names_duplicates("obs")
-        if not self.var.index.is_unique:
+        if hasattr(self.var.index, 'is_unique') and not self.var.index.is_unique:
             utils.warn_names_duplicates("var")
 
     def __contains__(self, key: Any):
@@ -1923,7 +2002,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         if "obs" in key and len(self._obs) != self._n_obs:
             raise ValueError(
                 "Observations annot. `obs` must have number of rows of `X`"
-                f" ({self._n_obs}), but has {self._obs.shape[0]} rows."
+                f" ({self._n_obs}), but has {len(self._obs)} rows (shape {self._obs.shape[0]})."
             )
         if "var" in key and len(self._var) != self._n_vars:
             raise ValueError(

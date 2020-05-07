@@ -308,7 +308,7 @@ H5AD_WRITE_REGISTRY = {
 }
 
 
-def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"]) -> AnnData:
+def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"], dask: bool = False) -> AnnData:
     d = dict(filename=filename, filemode=mode)
 
     f = h5py.File(filename, mode)
@@ -316,12 +316,12 @@ def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"]) -> An
     attributes = ["obsm", "varm", "obsp", "varp", "uns", "layers"]
     df_attributes = ["obs", "var"]
 
-    d.update({k: read_attribute(f[k]) for k in attributes if k in f})
+    d.update({k: read_attribute(f[k], dask=dask) for k in attributes if k in f})
     for k in df_attributes:
         if k in f:  # Backwards compat
-            d[k] = read_dataframe(f[k])
+            d[k] = read_dataframe(f[k], dask)
 
-    d["raw"] = _read_raw(f, attrs={"var", "varm"})
+    d["raw"] = _read_raw(f, dask=dask, attrs={"var", "varm"})
 
     X_dset = f.get("X", None)
     if X_dset is None:
@@ -333,7 +333,8 @@ def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"]) -> An
     else:
         raise ValueError()
 
-    _clean_uns(d)
+    _clean_uns(d, dask)
+    d['dask'] = dask
 
     return AnnData(**d)
 
@@ -345,6 +346,7 @@ def read_h5ad(
     as_sparse: Sequence[str] = (),
     as_sparse_fmt: Type[sparse.spmatrix] = sparse.csr_matrix,
     chunk_size: int = 6000,  # TODO, probably make this 2d chunks
+    dask: bool = False,
 ) -> AnnData:
     """\
     Read `.h5ad`-formatted hdf5 file.
@@ -375,7 +377,7 @@ def read_h5ad(
         if mode is True:
             mode = "r+"
         assert mode in {"r", "r+"}
-        return read_h5ad_backed(filename, mode)
+        return read_h5ad_backed(filename, mode, dask=dask)
 
     if as_sparse_fmt not in (sparse.csr_matrix, sparse.csc_matrix):
         raise NotImplementedError(
@@ -397,7 +399,15 @@ def read_h5ad(
         read_dense_as_sparse, sparse_format=as_sparse_fmt, axis_chunk=chunk_size,
     )
 
-    with h5py.File(filename, "r") as f:
+    f = h5py.File(filename, "r")
+    if dask:
+        from contextlib import nullcontext
+        ctx = nullcontext()
+        fd = f
+    else:
+        ctx = f
+        fd = None
+    with ctx:
         d = {}
         for k in f.keys():
             # Backwards compat for old raw
@@ -408,11 +418,11 @@ def read_h5ad(
             elif k == "raw":
                 assert False, "unexpected raw format"
             elif k in {"obs", "var"}:
-                d[k] = read_dataframe(f[k])
+                d[k] = read_dataframe(f[k], dask)
             else:  # Base case
-                d[k] = read_attribute(f[k])
+                d[k] = read_attribute(f[k], dask=dask)
 
-        d["raw"] = _read_raw(f, as_sparse, rdasp)
+        d["raw"] = _read_raw(f, as_sparse, rdasp, dask=dask)
 
         X_dset = f.get("X", None)
         if X_dset is None:
@@ -424,15 +434,16 @@ def read_h5ad(
         else:
             raise ValueError()
 
-    _clean_uns(d)  # backwards compat
+    _clean_uns(d, dask)  # backwards compat
 
-    return AnnData(**d)
+    return AnnData(**d, fd=fd)
 
 
 def _read_raw(
     f: Union[h5py.File, AnnDataFileManager],
     as_sparse: Collection[str] = (),
     rdasp: Callable[[h5py.Dataset], sparse.spmatrix] = None,
+    dask: bool = False,
     *,
     attrs: Collection[str] = ("X", "var", "varm"),
 ):
@@ -440,33 +451,43 @@ def _read_raw(
         assert rdasp is not None, "must supply rdasp if as_sparse is supplied"
     raw = {}
     if "X" in attrs and "raw/X" in f:
-        read_x = rdasp if "raw/X" in as_sparse else read_attribute
+        read_x = rdasp if "raw/X" in as_sparse else read_attribute  # TODO: dask
         raw["X"] = read_x(f["raw/X"])
     for v in ("var", "varm"):
         if v in attrs and f"raw/{v}" in f:
             raw[v] = read_attribute(f[f"raw/{v}"])
-    return _read_legacy_raw(f, raw, read_dataframe, read_attribute, attrs=attrs)
+    return _read_legacy_raw(f, raw, read_dataframe, read_attribute, dask, attrs=attrs)
 
 
 @report_read_key_on_error
-def read_dataframe_legacy(dataset) -> pd.DataFrame:
+def read_dataframe_legacy(dataset, dask: bool = False) -> pd.DataFrame:
     """Read pre-anndata 0.7 dataframes."""
-    df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
-    df.set_index(df.columns[0], inplace=True)
+    if dask:
+        from .dask.hdf5.load_dataframe import load_dask_dataframe
+        df = load_dask_dataframe(dataset=dataset, index_col=lambda df: df.columns[0])
+    else:
+        df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
+        df.set_index(df.columns[0], inplace=True)
     return df
 
 
 @report_read_key_on_error
-def read_dataframe(group) -> pd.DataFrame:
+def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
     if not isinstance(group, h5py.Group):
-        return read_dataframe_legacy(group)
+        return read_dataframe_legacy(group, dask)
+
     columns = list(group.attrs["column-order"])
     idx_key = group.attrs["_index"]
-    df = pd.DataFrame(
-        {k: read_series(group[k]) for k in columns},
-        index=read_series(group[idx_key]),
-        columns=list(columns),
-    )
+    if dask:
+        from dask.dataframe import DataFrame
+        from .dask.hdf5.load_dataframe import load_dask_dataframe
+        df = load_dask_dataframe(group=group)
+    else:
+        df = pd.DataFrame(
+            {k: read_series(group[k]) for k in columns},
+            index=read_series(group[idx_key]),
+            columns=list(columns),
+        )
     if idx_key != "_index":
         df.index.name = idx_key
     return df
@@ -501,7 +522,8 @@ def read_series(dataset) -> Union[np.ndarray, pd.Categorical]:
 
 @read_attribute.register(h5py.Group)
 @report_read_key_on_error
-def read_group(group: h5py.Group) -> Union[dict, pd.DataFrame, sparse.spmatrix]:
+def read_group(group: h5py.Group, dask=False) -> Union[dict, pd.DataFrame, sparse.spmatrix]:
+    # TODO: dask
     if "h5sparse_format" in group.attrs:  # Backwards compat
         return SparseDataset(group).to_memory()
 
@@ -520,13 +542,14 @@ def read_group(group: h5py.Group) -> Union[dict, pd.DataFrame, sparse.spmatrix]:
         raise ValueError(f"Unfamiliar `encoding-type`: {encoding_type}.")
     d = dict()
     for sub_key, sub_value in group.items():
-        d[sub_key] = read_attribute(sub_value)
+        d[sub_key] = read_attribute(sub_value, dask=dask)
     return d
 
 
 @read_attribute.register(h5py.Dataset)
 @report_read_key_on_error
-def read_dataset(dataset: h5py.Dataset):
+def read_dataset(dataset: h5py.Dataset, dask=False):
+    # TODO: dask
     value = dataset[()]
     if not hasattr(value, "dtype"):
         return value

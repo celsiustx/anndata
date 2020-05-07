@@ -115,7 +115,7 @@ def _to_fixed_length_strings(value: np.ndarray) -> np.ndarray:
 #############################
 
 
-def _clean_uns(d: Mapping[str, MutableMapping[str, Union[pd.Series, str, int]]]):
+def _clean_uns(d: Mapping[str, MutableMapping[str, Union[pd.Series, str, int]]], dask: bool = False):
     """
     Compat function for when categorical keys were stored in uns.
     This used to be buggy because when storing categorical columns in obs and var with
@@ -130,13 +130,22 @@ def _clean_uns(d: Mapping[str, MutableMapping[str, Union[pd.Series, str, int]]])
         if isinstance(cats, (str, int)):
             cats = [cats]
         for ann in ["obs", "var"]:
-            if name not in d[ann]:
-                continue
-            codes: np.ndarray = d[ann][name].values
-            # hack to maybe find the axis the categories were for
-            if not np.all(codes < len(cats)):
-                continue
-            d[ann][name] = pd.Categorical.from_codes(codes, cats)
+            if dask:
+                if name not in d[ann].columns:
+                    continue
+                d[ann][name] = \
+                    d[ann][name] \
+                        .astype('category') \
+                        .cat.set_categories(np.arange(len(cats))) \
+                        .cat.rename_categories(cats)
+            else:
+                if name not in d[ann]:
+                    continue
+                codes: np.ndarray = d[ann][name].values
+                # hack to maybe find the axis the categories were for
+                if not np.all(codes < len(cats)):
+                    continue
+                d[ann][name] = pd.Categorical.from_codes(codes, cats)
             k_to_delete.add(cats_name)
     for cats_name in k_to_delete:
         del d["uns"][cats_name]

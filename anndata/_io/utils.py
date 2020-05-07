@@ -202,7 +202,7 @@ def report_write_key_on_error(func):
 # -------------------------------------------------------------------------------
 
 
-def _read_legacy_raw(f, modern_raw, read_df, read_attr, *, attrs=("X", "var", "varm")):
+def _read_legacy_raw(f, modern_raw, read_df, read_attr, dask, *, attrs=("X", "var", "varm")):
     """\
     Backwards compat for reading legacy raw.
     Makes sure that no modern raw group coexists with legacy raw.* groups.
@@ -217,7 +217,7 @@ def _read_legacy_raw(f, modern_raw, read_df, read_attr, *, attrs=("X", "var", "v
     if "X" in attrs and "raw.X" in f:
         raw["X"] = read_attr(f["raw.X"])
     if "var" in attrs and "raw.var" in f:
-        raw["var"] = read_df(f["raw.var"])  # Backwards compat
+        raw["var"] = read_df(f["raw.var"], dask)  # Backwards compat
     if "varm" in attrs and "raw.varm" in f:
         raw["varm"] = read_attr(f["raw.varm"])
     return raw
