@@ -7,7 +7,6 @@ import pandas as pd
 import numpy as np
 
 
-# NOTE: These functions
 logger = getLogger(__file__)
 
 
