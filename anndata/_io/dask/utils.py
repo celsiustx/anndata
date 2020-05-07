@@ -56,10 +56,6 @@ def daskify_call_return_df(f: callable, *args, _dask_len=None, **kwargs):
         daskify_call(f, *args, _dask_len=None, _dask_output_types=pd.DataFrame, **kwargs))
 
 
-def daskify_method_call_return_df(obj, method_name, *args, _dask_len=None, **kwargs):
-    return daskify_call_return_df(obj, method_name, *args, _dask_len=_dask_len, **kwargs)
-
-
 def daskify_iloc(df, idx):
     def call_iloc(df_, idx_):
         return df_.iloc[idx_]
