@@ -1,14 +1,3 @@
-"""
-def dsk_call():
-    pass
-
-def dsk_call_method():
-    pass
-
-def dsk_call_to_df():
-    pass
-"""
-
 import dask
 import dask.dataframe
 import dask.array
