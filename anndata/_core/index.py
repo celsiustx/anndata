@@ -54,6 +54,8 @@ def _normalize_index(
     ],
     index: pd.Index,
 ) -> Union[slice, int, np.ndarray]:  # ndarray of int
+    from anndata._io.dask.utils import is_dask, daskify_call
+
     if not isinstance(index, pd.RangeIndex):
         assert (
             index.dtype != float and index.dtype != int
@@ -66,10 +68,10 @@ def _normalize_index(
             i = index.get_loc(i)
         return i
 
-    if isinstance(indexer, dask_base.DaskMethodsMixin):
-        if isinstance(index, dask_base.DaskMethodsMixin):
-            # both dask
-            return delayed(lambda ixr, ix: _normalize_index(ixr, ix))(indexer, index)
+    if is_dask(indexer):
+        if is_dask(index):
+            # both are dask
+            return daskify_call(_normalize_index, indexer, index)
         else:
             # just the indexer is dask
             return indexer.map(lambda ixr: _normalize_index(ixr, index))
