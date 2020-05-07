@@ -73,11 +73,6 @@ def _normalize_index(
         else:
             # just the indexer is dask
             return indexer.map(lambda ixr: _normalize_index(ixr, index))
-    elif isinstance(indexer, slice) and indexer == slice(None, None, None):
-        # This is a special case that is agnostic to tye type of index.  Works w/ dask or not.
-        return index
-    elif isinstance(index, dask_base.DaskMethodsMixin):
-        return index.map(lambda ix: _normalize_index(indexer, ix))
     elif isinstance(indexer, slice):
         start = name_idx(indexer.start)
         stop = name_idx(indexer.stop)
@@ -88,6 +83,9 @@ def _normalize_index(
         return slice(start, stop, step)
     elif isinstance(indexer, (np.integer, int)):
         return indexer
+    elif isinstance(index, dask_base.DaskMethodsMixin):
+        # Note: all code that actually touches the index should be after this check.
+        return index.map(lambda ix: _normalize_index(indexer, ix))
     elif isinstance(indexer, str):
         return index.get_loc(indexer)  # int
     elif isinstance(indexer, (Sequence, np.ndarray, pd.Index, spmatrix, np.matrix)):
