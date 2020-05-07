@@ -1,11 +1,11 @@
 import collections.abc as cabc
 from dask import base as dask_base
 from dask import delayed
-from dask.dataframe import dd
-from dask.array import da
+import dask.dataframe as dd
+import dask.array as da
 from functools import singledispatch
 from itertools import repeat
-from logging import getLogge
+from logging import getLogger
 from typing import Union, Sequence, Optional, Tuple
 
 import numpy as np
