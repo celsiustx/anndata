@@ -42,6 +42,14 @@ except ImportError:
         def __repr__():
             return "mock dask.array.core.Array"
 
+try:
+    from dask.delayed import Delayed as DaskDelayed
+except ImportError:
+
+    class DaskDelayed:
+        @staticmethod
+        def __repr__():
+            return "mock dask.delayed.Delayed"
 
 try:
     from typing import Literal

@@ -1,12 +1,18 @@
 import collections.abc as cabc
+from dask import base as dask_base
+from dask import delayed
+import dask.dataframe as dd
+import dask.array as da
 from functools import singledispatch
 from itertools import repeat
+from logging import getLogger
 from typing import Union, Sequence, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from scipy.sparse import spmatrix, issparse
 
+logger = getLogger(__file__)
 
 Index1D = Union[slice, int, str, np.int64, np.ndarray]
 Index = Union[Index1D, Tuple[Index1D, Index1D], spmatrix]
@@ -48,6 +54,8 @@ def _normalize_index(
     ],
     index: pd.Index,
 ) -> Union[slice, int, np.ndarray]:  # ndarray of int
+    from anndata._io.dask.utils import is_dask, daskify_call
+
     if not isinstance(index, pd.RangeIndex):
         assert (
             index.dtype != float and index.dtype != int
@@ -60,7 +68,14 @@ def _normalize_index(
             i = index.get_loc(i)
         return i
 
-    if isinstance(indexer, slice):
+    if is_dask(indexer):
+        if is_dask(index):
+            # both are dask
+            return daskify_call(_normalize_index, indexer, index)
+        else:
+            # just the indexer is dask
+            return indexer.map(lambda ixr: _normalize_index(ixr, index))
+    elif isinstance(indexer, slice):
         start = name_idx(indexer.start)
         stop = name_idx(indexer.stop)
         # string slices can only be inclusive, so +1 in that case
@@ -70,6 +85,9 @@ def _normalize_index(
         return slice(start, stop, step)
     elif isinstance(indexer, (np.integer, int)):
         return indexer
+    elif isinstance(index, dask_base.DaskMethodsMixin):
+        # Note: all code that actually touches the index should be after this check.
+        return index.map(lambda ix: _normalize_index(indexer, ix))
     elif isinstance(indexer, str):
         return index.get_loc(indexer)  # int
     elif isinstance(indexer, (Sequence, np.ndarray, pd.Index, spmatrix, np.matrix)):
@@ -125,6 +143,23 @@ def _subset(a: Union[np.ndarray, spmatrix, pd.DataFrame], subset_idx: Index):
         subset_idx = np.ix_(*subset_idx)
     return a[subset_idx]
 
+@_subset.register(da.Array)
+def _subset_dask_array(a: da.Array, idx: Index):
+    from anndata._io.dask.utils import daskify_call_return_array, daskify_calc_shape, is_dask, daskify_call
+    new_shape = daskify_calc_shape(a.shape, idx)
+    if any(is_dask(v) for v in new_shape):
+        return daskify_call(_subset, a, idx)
+    else:
+        # This only works if the shape is fully computed.
+        return daskify_call_return_array(_subset, a, idx,
+                                         _dask_shape=new_shape,
+                                         _dask_dtype=a.dtype,
+                                         _dask_meta=a._meta)
+
+@_subset.register(dask_base.DaskMethodsMixin)
+def _subset_dask_general(a: dask_base.DaskMethodsMixin, subset_idx: Index):
+    from anndata._io.dask.utils import daskify_call
+    return daskify_call(_subset, subset_idx)
 
 @_subset.register(pd.DataFrame)
 def _subset_df(df: pd.DataFrame, subset_idx: Index):

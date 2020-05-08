@@ -53,6 +53,7 @@ from ..compat import (
     ZarrArray,
     ZappyArray,
     DaskArray,
+    DaskDelayed,
     Literal,
     _slice_uns_sparse_matrices,
     _move_adj_mtx,
@@ -68,11 +69,12 @@ class StorageType(Enum):
     ZarrArray = ZarrArray
     ZappyArray = ZappyArray
     DaskArray = DaskArray
+    DaskDelayed = (DaskDelayed,) # Required b/c this is a function and cannot be in an Enum directly
 
     @classmethod
     def classes(cls):
-        return tuple(c.value for c in cls.__members__.values())
-
+        return tuple(c.value[0] if isinstance(c.value, tuple) else c.value
+                     for c in cls.__members__.values())
 
 # for backwards compat
 def _find_corresponding_multicol_key(key, keys_multicol):
@@ -339,6 +341,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             )
 
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index, dask: bool = False):
+        from anndata._io.dask.utils import is_dask, daskify_call, daskify_method_call,\
+            daskify_iloc, daskify_get_len_given_slice
+
         if adata_ref.isbacked and adata_ref.is_view:
             raise ValueError(
                 "Currently, you cannot index repeatedly into a backed AnnData, "
@@ -363,31 +368,37 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
         # views on attributes of adata_ref
         if dask:
-            if oidx == slice(None, None, None):
+            if (not is_dask(oidx)) and oidx == slice(None, None, None):
                 # If we didn't slice obs, just return the original.
-                obs_sub = adata_ref.obs
                 n_obs = adata_ref.n_obs
+                obs_sub = adata_ref.obs
             else:
-                n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
-                obs_sub = delayed(lambda obs: obs.iloc[oidx], nout=n_obs, **kw)(adata_ref.obs)
-            if vidx == slice(None, None, None):
+                if is_dask(oidx) or is_dask(adata_ref.n_obs):
+                    n_obs = daskify_get_len_given_slice(oidx, adata_ref.n_obs)
+                else:
+                    n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
+                obs_sub = daskify_iloc(adata_ref.obs, oidx)
+
+            if (not is_dask(vidx)) and vidx == slice(None, None, None):
                 # If we didnt' slice var, just return the original.
                 var_sub = adata_ref.var
                 n_vars = adata_ref.n_vars
             else:
-                n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
-                var_sub = delayed(lambda var: var.iloc[vidx], nout=n_vars, **kw)(adata_ref.var)
-            self._obsm = delayed(lambda obsm: obsm._view(self, (oidx,)), **kw)(adata_ref.obsm)
-            self._varm = delayed(lambda varm: varm._view(self, (vidx,)), **kw)(adata_ref.varm)
-            self._layers = delayed(lambda layers: layers._view(self, (oidx, vidx)), **kw)(adata_ref.layers) # check this (ssmith)
-            self._obsp = delayed(lambda obsp: obsp._view(self, oidx), **kw)(adata_ref.obsp)
-            self._varp = delayed(lambda varp: varp._view(self, vidx), **kw)(adata_ref.varp)
+                if is_dask(vidx) or is_dask(adata_ref.n_vars):
+                    n_vars = daskify_get_len_given_slice(vidx, adata_ref.n_vars)
+                else:
+                    n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
+                var_sub = daskify_iloc(adata_ref.var, vidx)
+
+            self._obsm = daskify_method_call(adata_ref.obsm, "iloc", oidx)
+            self._varm = daskify_method_call(adata_ref.obsm, "iloc", oidx)
+            self._layers = daskify_method_call(adata_ref.layers, "_view", self, (oidx, vidx))
+            self._obsp = daskify_method_call(adata_ref.obsp, "_view", self, oidx)
+            self._varp = daskify_method_call(adata_ref.varp, "_view", self, vidx)
+
             # Special case for old neighbors, backwards compat. Remove in anndata 0.8.
-            uns_new = delayed(
-                        lambda uns, oidx, n_obs:
-                            _slice_uns_sparse_matrices(uns, oidx, n_obs),
-                        **kw
-                      )(adata_ref._uns, self._oidx, adata_ref.n_obs)
+            uns_new = daskify_call(_slice_uns_sparse_matrices,
+                                   adata_ref._uns, self._oidx, adata_ref.n_obs)
             self._n_obs = n_obs
             self._n_vars = n_vars
         else:
@@ -411,14 +422,17 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
         # set attributes
         if dask:
-            self._obs = delayed(lambda obs_sub, self: DataFrameView(obs_sub, view_args=(self, "obs")), **kw)(obs_sub, self)
-            self._var = delayed(lambda var_sub, self: DataFrameView(var_sub, view_args=(self, "var")), **kw)(var_sub, self)
-            self._uns = delayed(lambda uns_new, self: DictView(uns_new, view_args=(self, "uns")), **kw)(uns_new, self)
+            def mk_dataframe_view(sub, ann, key):
+                return DataFrameView(sub, view_args=(ann, key))
+            def mk_dict_view(dat, ann):
+                return DictView(dat, view_args=(ann, key))
+            self._obs = daskify_call(mk_dataframe_view, obs_sub, self, "obs")
+            self._var = daskify_call(mk_dataframe_view, var_sub, self, "var")
+            self._uns = daskify_call(mk_dataframe_view, uns_new, self, "uns")
         else:
             self._obs = DataFrameView(obs_sub, view_args=(self, "obs"))
             self._var = DataFrameView(var_sub, view_args=(self, "var"))
             self._uns = DictView(uns_new, view_args=(self, "uns"))
-
 
         # set data
         if self.isbacked:
@@ -453,6 +467,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         fd=None,
         dask=False,
     ):
+        from anndata._io.dask.utils import is_dask
+
         # view attributes
         self._is_view = False
         self._adata_ref = None
@@ -530,7 +546,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                     X = X.astype(dtype)
             elif isinstance(X, ZarrArray):
                 X = X.astype(dtype)
-            elif isinstance(X, da.Array):
+            elif is_dask(X):
                 print(f'Pass Dask array: {X}')
                 pass
             else:  # is np.ndarray or a subclass, convert to true np.ndarray
@@ -610,6 +626,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         return size
 
     def _gen_repr(self, n_obs, n_vars) -> str:
+        from anndata._io.dask.utils import is_dask
+
         if self.isbacked:
             backed_at = f"backed at {str(self.filename)!r}"
         else:
@@ -626,7 +644,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             "varp",
         ]:
             obj = getattr(self, attr)
-            if hasattr(obj, 'keys'):
+            if is_dask(obj):
+                descr += f"\n    {attr}: {str(obj)}"
+            elif hasattr(obj, 'keys'):
                 keys = getattr(self, attr).keys()
                 if len(keys) > 0:
                     descr += f"\n    {attr}: {str(list(keys))[1:-1]}"
@@ -955,7 +975,13 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         """Unstructured annotation (ordered dictionary)."""
         uns = _overloaded_uns(self)
         if self.is_view:
-            uns = DictView(uns, view_args=(self, "uns"))
+            from anndata._io.dask.utils import is_dask, daskify_call
+            if self._dask or is_dask(uns):
+                def uns_to_dictview(uns_, anndata):
+                    return DictView(uns_, view_args=(anndata, "uns"))
+                uns = daskify_call(uns_to_dictview, uns, self)
+            else:
+                uns = DictView(uns, view_args=(self, "uns"))
         return uns
 
     @uns.setter
@@ -1489,6 +1515,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
     def copy(self, filename: Optional[PathLike] = None) -> "AnnData":
         """Full copy, optionally on disk."""
+        from anndata._io.dask.utils import is_dask, daskify_method_call
         if not self.isbacked:
             if self.is_view:
                 # TODO: How do I unambiguously check if this is a copy?
@@ -1501,7 +1528,15 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             # TODO: Figure out what case this is:
             if X is not None:
                 dtype = X.dtype
-                if X.shape != self.shape:
+                if (not (X.shape is self.shape)) and (is_dask(X.shape) or is_dask(self.shape)):
+                    def x_reshape(X, Xshape, anndata_shape):
+                        # This is a little ugly b/c we need the X.shape to compute
+                        # before we work on the X that has it.
+                        X.shape = Xshape
+                        X.reshape(anndata_shape)
+                    from anndata._io.dask.utils import daskify_call
+                    X = daskify_call(x_reshape, X, X.shape, self.shape)
+                elif X.shape != self.shape:
                     X = X.reshape(self.shape)
             else:
                 dtype = "float32"
