@@ -8,13 +8,6 @@ from anndata._core.aligned_mapping import AxisArrays
 from anndata._io.dask.utils import is_dask
 
 
-def diff_computed(adask, bdask, *args, **kwargs):
-    a = adask.compute(scheduler="synchronous")
-    b = bdask.compute(scheduler="synchronous")
-    c = diff_summary(a, b, *args, **kwargs)
-    print("%s <> %s: %s" % (a, b, c))
-    return c
-
 
 DIFF_PARTS = ['X', 'obs', 'var', 'uns', 'obsm', 'varm', 'layers', 'raw',
               'shape', 'obsp', 'varp']
@@ -23,7 +16,11 @@ DIFF_PARTS = ['X', 'obs', 'var', 'uns', 'obsm', 'varm', 'layers', 'raw',
 def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[List[str]] = None):
     """
     Emit a dictionary of differences between two AnnData objects.
-    Note that this will compute() any dask elements!
+    This is meant to be human readable, for debugging.  The values are summary text
+    strings when there is a difference.
+
+    Note that this will compute() any dask elements examined.
+
     :param a: AnnData
     :param b: AnnData
     :param select_parts: Optional[List[str]] Limit the diff to specific attributes.
@@ -52,13 +49,11 @@ def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[
                 changes[part] = "%s => %s" % (aa, bb)
             continue
 
-        # The class used for X may be different but still equal.
+        # The class used for X may be different but still hold identical data.
         if isinstance(aa, anndata._core.sparse_dataset.SparseDataset):
             aa = aa.value
         if isinstance(bb, anndata._core.sparse_dataset.SparseDataset):
             bb = bb.value
-
-        # From here on the types must match.
 
         if type(aa) != type(bb):
             changes[part] = "class mismatch: %s => %s" % (aa.__class__, bb.__class__)
@@ -67,11 +62,11 @@ def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[
         if isinstance(aa, scipy.sparse.csr.csr_matrix):
             cnt = (aa != bb).nnz
             if cnt != 0:
-                changes[part] = "differences count between sparse arrays: %s" % cnt
+                changes[part] = "count of differences between sparse arrays: %s" % cnt
         elif isinstance(aa, pd.DataFrame):
             delta = diff_df(aa, bb)
             if delta is not None:
-                changes[part] = str(delta)
+                changes[part] = str(delta) # Let pandas make a nice string.
         elif isinstance(aa, (list, tuple, AxisArrays)):
             if aa != bb:
                 changes[part] = "differ: %s => %s" % (aa, bb)
@@ -87,7 +82,6 @@ def _simplify_for_diff(value):
     import anndata
     import json
     import pandas._libs.index
-    import pandas.core.indexes
     from collections import OrderedDict
     from anndata._core.aligned_mapping import AxisArrays
     from anndata.compat._overloaded_dict import OverloadedDict
