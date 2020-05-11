@@ -9,7 +9,7 @@ import dask
 import scanpy
 
 dask.config.set(scheduler='synchronous')
-os.chdir("/mnt/ebs/moredata")  # Swith
+os.chdir("/mnt/ebs/moredata")  # Switch this to wherever you have the s3 data loaded.
 
 # Get the .h5 file.
 file1_10x_h5 = "CID003069-1.h5"
