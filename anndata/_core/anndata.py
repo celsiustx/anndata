@@ -716,10 +716,10 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                     # For now, just delay calling the exact code we would normally.
                     # This has less intelligence behind it.
 
-                    #xx = load_dask_array(path=self.file.filename, key='X', format_str='csc', shape=self.shape)
-                    self._X = da.from_delayed(delayed(load_x_from_h5ad)(),
-                                              shape=self.shape,
-                                              dtype=[('start_0', '<i8'), ('end_0', '<i8'), ('start_1', '<i8'), ('end_1', '<i8')])
+                    self._X = load_dask_array(path=self.file.filename, key='X', format_str='csc', shape=self.shape)
+                    #self._X = da.from_delayed(delayed(load_x_from_h5ad)(),
+                    #                          shape=self.shape,
+                    #                          dtype=[('start_0', '<i8'), ('end_0', '<i8'), ('start_1', '<i8'), ('end_1', '<i8')])
                 X = self._X
             else:
                 return load_x_from_h5ad()

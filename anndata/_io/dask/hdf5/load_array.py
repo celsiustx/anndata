@@ -172,4 +172,5 @@ def load_dask_array(
         # Expand each block (which each contain a single `H5Chunk`) into the corresponding array:
         arr = h5chunks.map_blocks(to_arr, chunks=chunks, dtype=X.dtype, rank=rank)
 
+        # Intermittent SIGSEGV here.
         return arr
