@@ -114,7 +114,7 @@ def daskify_get_len_given_slice(slc: slice, orig_len: int):
     return daskify_call(slc, orig_len)
 
 
-def compute_anndata(an: "anndata.AnnData", _parallel:bool=True, *args, **kwargs):
+def compute_anndata(an: "anndata.AnnData", *args, **kwargs):
     from anndata import AnnData
 
     def _compute_anndata(X, **raw_attr_value_pairs):
