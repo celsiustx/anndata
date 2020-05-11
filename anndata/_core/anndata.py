@@ -5,8 +5,11 @@ import warnings
 import collections.abc as cabc
 from collections import OrderedDict
 from copy import deepcopy
+from dask import array as da
 from dask import dataframe as dd
 from dask import delayed
+
+
 from enum import Enum
 from functools import reduce, singledispatch
 from pathlib import Path
@@ -15,7 +18,6 @@ from typing import Any, Union, Optional  # Meta
 from typing import Iterable, Sequence, Mapping, MutableMapping  # Generic ABCs
 from typing import Tuple, List  # Generic
 
-from dask import array as da
 import h5py
 from natsort import natsorted
 import numpy as np
@@ -682,31 +684,45 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     def X(self) -> Optional[Union[np.ndarray, sparse.spmatrix, ArrayView]]:
         """Data matrix of shape :attr:`n_obs` × :attr:`n_vars`."""
         if self.isbacked:
-            if not self.file.is_open:
-                self.file.open()
-            X = self.file["X"]
-            if isinstance(X, h5py.Group):
-                X = SparseDataset(X)
+            def load_x_from_h5ad():
+                if not self.file.is_open:
+                    self.file.open()
+                X = self.file["X"]
+                if isinstance(X, h5py.Group):
+                    X = SparseDataset(X)
 
+                # TODO: This should get replaced/ handled elsewhere
+                # This is so that we can index into a backed dense dataset with
+                # indices that aren’t strictly increasing
+                if self.is_view and isinstance(X, h5py.Dataset):
+                    ordered = [self._oidx, self._vidx]  # this will be mutated
+                    rev_order = [slice(None), slice(None)]
+                    for axis, axis_idx in enumerate(ordered.copy()):
+                        if isinstance(axis_idx, np.ndarray) and axis_idx.dtype.type != bool:
+                            order = np.argsort(axis_idx)
+                            ordered[axis] = axis_idx[order]
+                            rev_order[axis] = np.argsort(order)
+                    # from hdf5, then to real order
+                    X = X[tuple(ordered)][tuple(rev_order)]
+                elif self.is_view:
+                    X = X[self._oidx, self._vidx]
+                # Why do we not set _X?  This work is repeated? -ssmith
+                return X
             if self._dask:
                 from anndata._io.dask.hdf5.load_array import load_dask_array
-                X = load_dask_array(X=X, chunk_size="8MiB")
+                from anndata._io.dask.utils import daskify_call_return_array
+                if self._X is None:
+                    # NOTE: his is failing with SIGSEV though the same codw works in scanpy.  Why?
+                    # For now, just delay calling the exact code we would normally.
+                    # This has less intelligence behind it.
 
-            # TODO: This should get replaced/ handled elsewhere
-            # This is so that we can index into a backed dense dataset with
-            # indices that aren’t strictly increasing
-            if self.is_view and isinstance(X, h5py.Dataset):
-                ordered = [self._oidx, self._vidx]  # this will be mutated
-                rev_order = [slice(None), slice(None)]
-                for axis, axis_idx in enumerate(ordered.copy()):
-                    if isinstance(axis_idx, np.ndarray) and axis_idx.dtype.type != bool:
-                        order = np.argsort(axis_idx)
-                        ordered[axis] = axis_idx[order]
-                        rev_order[axis] = np.argsort(order)
-                # from hdf5, then to real order
-                X = X[tuple(ordered)][tuple(rev_order)]
-            elif self.is_view:
-                X = X[self._oidx, self._vidx]
+                    #xx = load_dask_array(path=self.file.filename, key='X', format_str='csc', shape=self.shape)
+                    self._X = da.from_delayed(delayed(load_x_from_h5ad)(),
+                                              shape=self.shape,
+                                              dtype=[('start_0', '<i8'), ('end_0', '<i8'), ('start_1', '<i8'), ('end_1', '<i8')])
+                X = self._X
+            else:
+                return load_x_from_h5ad()
         elif self.is_view:
             X = as_view(
                 _subset(self._adata_ref.X, (self._oidx, self._vidx)),
@@ -1568,6 +1584,17 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             mode = self.file._filemode
             self.write(filename)
             return read_h5ad(filename, backed=mode)
+
+    def compute(self, *args, **kwargs):
+        from anndata._io.dask.utils import compute_anndata
+        if not self._dask:
+            return self
+        else:
+            return compute_anndata(self, *args, **kwargs)
+
+    def diff_summary(self, other: "AnnData"):
+        from anndata.diff import diff_summary
+        return diff_summary(other, self)
 
     def concatenate(
         self,
