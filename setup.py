@@ -21,9 +21,13 @@ setup(
     author=__author__,
     author_email=__email__,
     license="BSD-3-Clause",
-    install_requires=[
-        l.strip() for l in Path("requirements.txt").read_text("utf-8").splitlines()
+    dependency_links=[
+        "git@github.com:celsiustx/dask@ctx#egg=dask-ctx"
     ],
+    install_requires=[
+        l.strip() for l in Path('requirements.txt').read_text('utf-8').splitlines()
+        if not l.startswith("-e")
+    ] + ["dask[dataframe]", "dask[array]"],
     python_requires=">=3.6",
     packages=find_namespace_packages(include=["anndata", "anndata.*"]),
     include_package_data=True,
