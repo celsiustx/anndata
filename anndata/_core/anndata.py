@@ -1585,6 +1585,17 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             self.write(filename)
             return read_h5ad(filename, backed=mode)
 
+    def compute(self, *args, **kwargs):
+        from anndata._io.dask.utils import compute_anndata
+        if not self._dask:
+            return self
+        else:
+            return compute_anndata(self, *args, **kwargs)
+
+    def diff_summary(self, other: "AnnData"):
+        from anndata.diff import diff_summary
+        return diff_summary(other, self)
+
     def concatenate(
         self,
         *adatas: "AnnData",

@@ -1,10 +1,14 @@
+
+import functools
+from logging import getLogger
+from typing import Optional, List
+
+import pandas as pd
+import numpy as np
+
 import dask
 import dask.dataframe
 import dask.array
-import functools
-from logging import getLogger
-import pandas as pd
-import numpy as np
 
 
 logger = getLogger(__file__)
@@ -103,7 +107,29 @@ def daskify_iloc(df, idx):
     df = daskify_call_return_df(call_iloc, df, idx, _dask_meta=meta)
     return df
 
+
 def daskify_get_len_given_slice(slc: slice, orig_len: int):
     def get_size(slc_, orig_len_):
         len(range(*slc_.indices(orig_len_)))
     return daskify_call(slc, orig_len)
+
+
+def compute_anndata(an: "anndata.AnnData", _parallel:bool=True, *args, **kwargs):
+    from anndata import AnnData
+
+    def _compute_anndata(X, **raw_attr_value_pairs):
+        # Construct an AnnData at a low-level,
+        # swapping out each of the attributes specified.
+        an = AnnData.__new__(AnnData)
+        for key, value in raw_attr_value_pairs.items():
+            setattr(an, key, value)
+        an._X = X
+        an._dask = False
+        return an
+
+    # Passing the attribute this way will automatically put them into
+    # the graph in parallel:
+    attribute_value_pairs = an.__dict__.copy()
+    virtual = daskify_call(_compute_anndata, an.X, **attribute_value_pairs)
+    real = virtual.compute(*args, **kwargs)
+    return real
