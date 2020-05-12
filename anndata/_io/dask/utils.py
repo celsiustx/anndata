@@ -123,6 +123,8 @@ def compute_anndata(an: "anndata.AnnData", *args, **kwargs):
         an = AnnData.__new__(AnnData)
         for key, value in raw_attr_value_pairs.items():
             setattr(an, key, value)
+        if hasattr(X, "tocsr"):
+            X = X.tocsr()
         an._X = X
         an._dask = False
         return an

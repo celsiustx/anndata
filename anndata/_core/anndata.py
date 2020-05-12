@@ -5,10 +5,9 @@ import warnings
 import collections.abc as cabc
 from collections import OrderedDict
 from copy import deepcopy
-from dask import array as da
 from dask import dataframe as dd
-from dask import delayed
-
+from dask.array.backends import register_scipy_sparse
+register_scipy_sparse()
 
 from enum import Enum
 from functools import reduce, singledispatch
@@ -713,16 +712,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 return X
             if self._dask:
                 from anndata._io.dask.hdf5.load_array import load_dask_array
-                from anndata._io.dask.utils import daskify_call_return_array
                 if self._X is None:
-                    # NOTE: his is failing with SIGSEV though the same codw works in scanpy.  Why?
-                    # For now, just delay calling the exact code we would normally.
-                    # This has less intelligence behind it.
-
-                    #xx = load_dask_array(path=self.file.filename, key='X', format_str='csc', shape=self.shape)
-                    self._X = da.from_delayed(delayed(load_x_from_h5ad)(),
-                                              shape=self.shape,
-                                              dtype=[('start_0', '<i8'), ('end_0', '<i8'), ('start_1', '<i8'), ('end_1', '<i8')])
+                    self._X = load_dask_array(path=self.file.filename, key='X', format_str='csr', shape=self.shape)
                 X = self._X
             else:
                 return load_x_from_h5ad()
