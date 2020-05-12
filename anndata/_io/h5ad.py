@@ -372,6 +372,13 @@ def read_h5ad(
         Higher size means higher memory consumption and higher (to a point)
         loading speed.
     """
+
+    if dask and backed is None:
+        backed = True
+
+    if dask and not backed:
+        raise ValueError("If the dask flag is set the backed flag cannot be False.")
+
     if backed not in {None, False}:
         mode = backed
         if mode is True:

@@ -346,6 +346,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         from anndata._io.dask.utils import is_dask, daskify_call, daskify_method_call,\
             daskify_iloc, daskify_get_len_given_slice
 
+        if is_dask(adata_ref) or is_dask(oidx) or is_dask(vidx):
+            is_dask = True
+
         if adata_ref.isbacked and adata_ref.is_view:
             raise ValueError(
                 "Currently, you cannot index repeatedly into a backed AnnData, "
