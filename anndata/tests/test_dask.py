@@ -35,7 +35,7 @@ def test_cmp_new_old_h5ad(dask):
     def load_ad(path):
         ad = read_h5ad(path, backed='r', dask=dask)
         X = compute(ad.X)
-        coo = X.tocoo() if dask else X.value.tocoo()
+        coo = X.value.tocoo()
         rows, cols = coo.nonzero()
         nnz = list(zip(list(rows), list(cols)))
         return Obj(dict(ad=ad, nnz=nnz, obs=compute(ad.obs), var=compute(ad.var)), default=ad)
