@@ -55,6 +55,12 @@ def test_cmp_new_old_h5ad(dask):
 
     print(old.obs.index)
 
+    if old.obs.index.names == [None] and new.obs.index.names == ["_index"]:
+        old.obs.index.names = ["_index"]
+
+    if old.var.index.names == [None] and new.var.index.names == ["_index"]:
+        old.var.index.names = ["_index"]
+
     assert_frame_equal(old.obs, new.obs)
     assert_frame_equal(old.var, new.var)
     # with TemporaryDirectory() as dir:
@@ -87,7 +93,9 @@ def test_dask_load(path):
         )
 
     check((
-        'X','obs','var',
+        'X',
+        'obs',
+        'var',
         # TODO: obsm, varm, obsp, varp, uns, layers, raw
     ))
 
