@@ -53,6 +53,9 @@ from scipy.sparse import spmatrix
 def _(l, r):
     if isinstance(r, DaskMethodsMixin):
         r = r.compute()
+    if hasattr(r, "value"):
+        # A SparseDataset wrapper.
+        r = r.value
     assert((l != r).nnz == 0)
 
 from pandas import DataFrame as DF

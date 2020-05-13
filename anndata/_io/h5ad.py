@@ -488,7 +488,11 @@ def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
     if dask:
         from dask.dataframe import DataFrame
         from .dask.hdf5.load_dataframe import load_dask_dataframe
-        df = load_dask_dataframe(group=group, index_col=idx_key)
+        df = load_dask_dataframe(
+            group=group,
+            index_col=idx_key,
+            columns=columns
+        )
     else:
         df = pd.DataFrame(
             {k: read_series(group[k]) for k in columns},
