@@ -64,6 +64,8 @@ from pandas.testing import assert_frame_equal
 def _(l, r):
     if isinstance(r, DaskMethodsMixin):
         r = r.compute()
+    if l.index.names == [None] and r.index.names == ["_index"]:
+        l.index.names = ["_index"]
     assert_frame_equal(l, r)
 
 
