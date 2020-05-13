@@ -51,12 +51,14 @@ def _(l, r): assert l == r
 from scipy.sparse import spmatrix
 @eq.register(spmatrix)
 def _(l, r):
-    if isinstance(r, DaskMethodsMixin):
-        r = r.compute()
-    if hasattr(r, "value"):
-        # A SparseDataset wrapper.
-        r = r.value
-    assert((l != r).nnz == 0)
+    diff = (l != r)
+    if hasattr(diff, "nnz"):
+        assert(diff.nnz == 0)
+    else:
+        print(l.__class__, l)
+        print(r.__class__, r)
+        raise Exception("Can't compare %s and %s!" % (l, r))
+
 
 from pandas import DataFrame as DF
 from pandas.testing import assert_frame_equal
