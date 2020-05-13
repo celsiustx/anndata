@@ -35,7 +35,7 @@ def test_cmp_new_old_h5ad(dask):
     def load_ad(path):
         ad = read_h5ad(path, backed='r', dask=dask)
         X = compute(ad.X)
-        coo = X.tocoo() if dask else X.value.tocoo()
+        coo = X.value.tocoo()
         rows, cols = coo.nonzero()
         nnz = list(zip(list(rows), list(cols)))
         return Obj(dict(ad=ad, nnz=nnz, obs=compute(ad.obs), var=compute(ad.var)), default=ad)
@@ -54,6 +54,12 @@ def test_cmp_new_old_h5ad(dask):
     old.var.index.name = None
 
     print(old.obs.index)
+
+    if old.obs.index.names == [None] and new.obs.index.names == ["_index"]:
+        old.obs.index.names = ["_index"]
+
+    if old.var.index.names == [None] and new.var.index.names == ["_index"]:
+        old.var.index.names = ["_index"]
 
     assert_frame_equal(old.obs, new.obs)
     assert_frame_equal(old.var, new.var)
@@ -87,7 +93,9 @@ def test_dask_load(path):
         )
 
     check((
-        'X','obs','var',
+        'X',
+        'obs',
+        'var',
         # TODO: obsm, varm, obsp, varp, uns, layers, raw
     ))
 
