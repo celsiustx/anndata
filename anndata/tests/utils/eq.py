@@ -51,13 +51,13 @@ def _(l, r): assert l == r
 from scipy.sparse import spmatrix
 @eq.register(spmatrix)
 def _(l, r):
+    if l.shape != r.shape:
+        raise ValueError("Differing shapes: %s => %s" % (l.shape, r.shape))
     diff = (l != r)
     if hasattr(diff, "nnz"):
         assert(diff.nnz == 0)
     else:
-        print(l.__class__, l)
-        print(r.__class__, r)
-        raise Exception("Can't compare %s and %s!" % (l, r))
+        raise ValueError("Can't compare %s and %s!" % (l, r))
 
 
 from pandas import DataFrame as DF
