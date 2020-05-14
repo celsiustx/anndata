@@ -5,7 +5,6 @@ import warnings
 import collections.abc as cabc
 from collections import OrderedDict
 from copy import deepcopy
-import anndata_daskified
 from dask import dataframe as dd
 from dask.array.backends import register_scipy_sparse
 register_scipy_sparse()
@@ -311,61 +310,47 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         fd = None,
         asview: bool = False,
         *,
-        dask: bool = False,
         obsp: Optional[Union[np.ndarray, Mapping[str, Sequence[Any]]]] = None,
         varp: Optional[Union[np.ndarray, Mapping[str, Sequence[Any]]]] = None,
         oidx: Index1D = None,
         vidx: Index1D = None,
     ):
-        self._dask = dask
+        # Sanity check to ensure everything that shoudl goed through AnnDataDask
+        from anndata._io.dask.utils import is_dask
+        if any(is_dask(v) for v in (X, obs, var, uns)):
+            import anndata_daskified
+            if not isinstance(self, anndata_daskified.AnnDataDask):
+                raise ValueError("Dask attributes should only be used on an AnnDataDask!")
+
+        # TODO: Remove
+        self._dask = False
 
         if asview:
+            import anndata_daskified
             if not isinstance(X, AnnData):
                 raise ValueError("`X` has to be an AnnData object.")
-            if dask:
+            if self._dask and not isinstance(self, anndata_daskified.AnnDataDask):
                 anndata_daskified._init_as_view(self, X, oidx, vidx)
             else:
                 self._init_as_view(X, oidx, vidx)
         else:
-            if dask:
-                anndata_daskified._init_as_actual(
-                    self, # because this is called as a function
-                    X=X,
-                    obs=obs,
-                    var=var,
-                    uns=uns,
-                    obsm=obsm,
-                    varm=varm,
-                    raw=raw,
-                    layers=layers,
-                    dtype=dtype,
-                    shape=shape,
-                    obsp=obsp,
-                    varp=varp,
-                    filename=filename,
-                    filemode=filemode,
-                    fd=fd,
-                    dask=dask
-                )
-            else:
-                self._init_as_actual(
-                    X=X,
-                    obs=obs,
-                    var=var,
-                    uns=uns,
-                    obsm=obsm,
-                    varm=varm,
-                    raw=raw,
-                    layers=layers,
-                    dtype=dtype,
-                    shape=shape,
-                    obsp=obsp,
-                    varp=varp,
-                    filename=filename,
-                    filemode=filemode,
-                    fd=fd,
-                    dask=dask
-                )
+            self._init_as_actual(
+                X=X,
+                obs=obs,
+                var=var,
+                uns=uns,
+                obsm=obsm,
+                varm=varm,
+                raw=raw,
+                layers=layers,
+                dtype=dtype,
+                shape=shape,
+                obsp=obsp,
+                varp=varp,
+                filename=filename,
+                filemode=filemode,
+                fd=fd
+            )
 
 
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
@@ -425,8 +410,6 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         else:
             self._raw = None
 
-        self._dask = dask
-
     def _init_as_actual(
         self,
         X=None,
@@ -443,8 +426,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         shape=None,
         filename=None,
         filemode=None,
-        fd=None,
-        dask=False,
+        fd=None
     ):
         from anndata._io.dask.utils import is_dask
 
@@ -453,7 +435,6 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         self._adata_ref = None
         self._oidx = None
         self._vidx = None
-        self._dask = dask
 
         # ----------------------------------------------------------------------
         # various ways of initializing the data
@@ -526,8 +507,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             elif isinstance(X, ZarrArray):
                 X = X.astype(dtype)
             elif is_dask(X):
-                print(f'Pass Dask array: {X}')
-                pass
+                raise ValueError("Use the AnnDataDask subclass to use an X that is daskified!")
             else:  # is np.ndarray or a subclass, convert to true np.ndarray
                 X = np.array(X, dtype, copy=False)
             # data matrix and shape
@@ -657,27 +637,12 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         """Shape of data matrix (:attr:`n_obs`, :attr:`n_vars`)."""
         return self.n_obs, self.n_vars
 
-    def _daskify_X(self):
-        from anndata._io.dask.hdf5.load_array import load_dask_array
-        if self._X is None:
-            if self.is_view:
-                X = self._adata_ref.X[self._oidx, self._vidx]
-            else:
-                X = load_dask_array(path=self.file.filename, key='X',
-                                    format_str='csr', shape=self.shape)
-                # NOTE: The original code has logic for when the backed X
-                # comes from a Dataset below.  See the TODO below.
-            self._X = X
-        else:
-            X = load_dask_array(path=self.file.filename, key='X',
-                                format_str='csr', shape=self.shape)
-        return self._X
-
     @property
     def X(self) -> Optional[Union[np.ndarray, sparse.spmatrix, ArrayView]]:
         """Data matrix of shape :attr:`n_obs` × :attr:`n_vars`."""
         if self._dask:
-            return self._daskify_X()
+            import anndata_daskified
+            return anndata_daskified.X(self)
         elif self.isbacked:
             if not self.file.is_open:
                 self.file.open()
@@ -1185,7 +1150,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     def __getitem__(self, index: Index) -> "AnnData":
         """Returns a sliced view of the object."""
         oidx, vidx = self._normalize_indices(index)
-        return AnnData(self, oidx=oidx, vidx=vidx, asview=True, dask=self._dask)
+        return self.__class__(self, oidx=oidx, vidx=vidx, asview=True)
 
     def _remove_unused_categories(self, df_full, df_sub, uns, inplace=True):
         from pandas.api.types import is_categorical

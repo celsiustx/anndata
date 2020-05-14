@@ -13,6 +13,8 @@ import pandas as pd
 from pandas.api.types import is_categorical_dtype
 from scipy import sparse
 
+from anndata_daskified import AnnDataDask
+
 from .._core.sparse_dataset import SparseDataset
 from .._core.file_backing import AnnDataFileManager
 from .._core.anndata import AnnData
@@ -334,9 +336,11 @@ def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"], dask:
         raise ValueError()
 
     _clean_uns(d, dask)
-    d['dask'] = dask
 
-    return AnnData(**d)
+    if dask:
+        return AnnDataDask(**d)
+    else:
+        return AnnData(**d)
 
 
 def read_h5ad(
@@ -444,6 +448,7 @@ def read_h5ad(
     _clean_uns(d, dask)  # backwards compat
 
     return AnnData(**d, fd=fd)
+
 
 
 def _read_raw(

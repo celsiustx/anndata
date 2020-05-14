@@ -2,6 +2,8 @@ import warnings
 import collections.abc as cabc
 from collections import OrderedDict
 from copy import deepcopy
+
+from anndata._core.anndata import AnnData
 from dask import dataframe as dd
 from dask.array.backends import register_scipy_sparse
 register_scipy_sparse()
@@ -158,175 +160,37 @@ def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
         self._raw = None
     ### END COPIED FROM ORIGINAL
 
-
-def _init_as_actual(
-    self,
-    X=None,
-    obs=None,
-    var=None,
-    uns=None,
-    obsm=None,
-    varm=None,
-    varp=None,
-    obsp=None,
-    raw=None,
-    layers=None,
-    dtype="float32",
-    shape=None,
-    filename=None,
-    filemode=None,
-    fd=None,
-    dask=False,
-):
-    from anndata._io.dask.utils import is_dask
-    from anndata._core.anndata import _gen_dataframe
-
-    # view attributes
-    self._is_view = False
-    self._adata_ref = None
-    self._oidx = None
-    self._vidx = None
-    self._dask = dask
-
-    # ----------------------------------------------------------------------
-    # various ways of initializing the data
-    # ----------------------------------------------------------------------
-
-    # If X is a data frame, we store its indices for verification
-    x_indices = []
-
-    # init from file
-    if filename is not None:
-        self.file = AnnDataFileManager(self, filename, filemode, fd=fd)
-    else:
-        self.file = AnnDataFileManager(self, fd=fd)
-
-        # init from AnnData
-        if isinstance(X, AnnData):
-            if any((obs, var, uns, obsm, varm, obsp, varp)):
-                raise ValueError(
-                    "If `X` is a dict no further arguments must be provided."
-                )
-            X, obs, var, uns, obsm, varm, obsp, varp, layers, raw = (
-                X._X,
-                X.obs,
-                X.var,
-                X.uns,
-                X.obsm,
-                X.varm,
-                X.obsp,
-                X.varp,
-                X.layers,
-                X.raw,
-            )
-
-        # init from DataFrame
-        elif isinstance(X, pd.DataFrame):
-            # to verify index matching, we wait until obs and var are DataFrames
-            if obs is None:
-                obs = pd.DataFrame(index=X.index)
-            elif not isinstance(X.index, pd.RangeIndex):
-                x_indices.append(("obs", "index", X.index))
-            if var is None:
-                var = pd.DataFrame(index=X.columns)
-            elif not isinstance(X.columns, pd.RangeIndex):
-                x_indices.append(("var", "columns", X.columns))
-            X = ensure_df_homogeneous(X, "X")
-
-    # ----------------------------------------------------------------------
-    # actually process the data
-    # ----------------------------------------------------------------------
-
-    # check data type of X
-    if X is not None:
-        for s_type in StorageType:
-            if isinstance(X, s_type.value):
-                break
+def X(self):
+    from anndata._io.dask.hdf5.load_array import load_dask_array
+    if self._X is None:
+        if self.is_view:
+            X = self._adata_ref.X[self._oidx, self._vidx]
         else:
-            class_names = ", ".join(c.__name__ for c in StorageType.classes())
-            raise ValueError(
-                f"`X` needs to be of one of {class_names}, not {type(X)}."
-            )
-        if shape is not None:
-            raise ValueError("`shape` needs to be `None` if `X` is not `None`.")
-        _check_2d_shape(X)
-        # if type doesn’t match, a copy is made, otherwise, use a view
-        if issparse(X) or isinstance(X, ma.MaskedArray):
-            # TODO: maybe use view on data attribute of sparse matrix
-            #       as in readwrite.read_10x_h5
-            if X.dtype != np.dtype(dtype):
-                X = X.astype(dtype)
-        elif isinstance(X, ZarrArray):
-            X = X.astype(dtype)
-        elif is_dask(X):
-            print(f'Pass Dask array: {X}')
-            pass
-        else:  # is np.ndarray or a subclass, convert to true np.ndarray
-            X = np.array(X, dtype, copy=False)
-        # data matrix and shape
+            X = load_dask_array(path=self.file.filename, key='X',
+                                format_str='csr', shape=self.shape)
+            # NOTE: The original code has logic for when the backed X
+            # comes from a Dataset below.  See the TODO below.
         self._X = X
-        self._n_obs, self._n_vars = self._X.shape
     else:
-        self._X = None
-        self._n_obs = len([] if obs is None else obs)
-        self._n_vars = len([] if var is None else var)
-        # check consistency with shape
-        if shape is not None:
-            if self._n_obs == 0:
-                self._n_obs = shape[0]
-            else:
-                if self._n_obs != shape[0]:
-                    raise ValueError("`shape` is inconsistent with `obs`")
-            if self._n_vars == 0:
-                self._n_vars = shape[1]
-            else:
-                if self._n_vars != shape[1]:
-                    raise ValueError("`shape` is inconsistent with `var`")
+        X = load_dask_array(path=self.file.filename, key='X',
+                            format_str='csr', shape=self.shape)
+    return self._X
 
-    # annotations
-    self._obs = _gen_dataframe(obs, self._n_obs, ["obs_names", "row_names"])
-    self._var = _gen_dataframe(var, self._n_vars, ["var_names", "col_names"])
 
-    # now we can verify if indices match!
-    for attr_name, x_name, idx in x_indices:
-        attr = getattr(self, attr_name)
-        if isinstance(attr.index, pd.RangeIndex):
-            attr.index = idx
-        elif not idx.equals(attr.index):
-            raise ValueError(f"Index of {attr_name} must match {x_name} of X.")
+class AnnDataDask(AnnData):
+    def __init__(self, *args, **kwargs):
+        self._dask = True
+        super().__init__(*args, **kwargs)
 
-    # unstructured annotations
-    self.uns = uns or OrderedDict()
+    def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
+        return _init_as_view(self, adata_ref, oidx, vidx)
 
-    # TODO: Think about consequences of making obsm a group in hdf
-    self._obsm = AxisArrays(self, 0, vals=convert_to_dict(obsm))
-    self._varm = AxisArrays(self, 1, vals=convert_to_dict(varm))
+    @property
+    def X(self):
+        return X(self)
 
-    self._obsp = PairwiseArrays(self, 0, vals=convert_to_dict(obsp))
-    self._varp = PairwiseArrays(self, 1, vals=convert_to_dict(varp))
-
-    # Backwards compat for connectivities matrices in uns["neighbors"]
-    _move_adj_mtx({"uns": self._uns, "obsp": self._obsp})
-
-    self._check_dimensions()
-    self._check_uniqueness()
-
-    if self.filename:
-        assert not isinstance(
-            raw, Raw
-        ), "got raw from other adata but also filename?"
-        if {"raw", "raw.X"} & set(self.file):
-            raw = dict(X=None, **raw)
-    if not raw:
-        self._raw = None
-    elif isinstance(raw, cabc.Mapping):
-        self._raw = Raw(self, **raw)
-    else:  # is a Raw from another AnnData
-        self._raw = Raw(self, raw._X, raw.var, raw.varm)
-
-    # clean up old formats
-    self._clean_up_old_format(uns)
-
-    # layers
-    self._layers = Layers(self, layers)
+    def __getitem__(self, index: Index) -> "AnnData":
+        """Returns a sliced view of the object."""
+        oidx, vidx = self._normalize_indices(index)
+        return self.__class__(self, oidx=oidx, vidx=vidx, asview=True)
 
