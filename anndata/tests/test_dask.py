@@ -8,6 +8,7 @@ from anndata import read_h5ad
 from .utils.data import make_test_h5ad
 from .utils.eq import cmp as eq
 from .utils.obj import Obj
+from .._core.sparse_dataset import SparseDataset
 
 package_root = Path(anndata.__file__).parent.parent
 new_path = package_root / 'new.h5ad'
@@ -35,6 +36,8 @@ def test_cmp_new_old_h5ad(dask):
     def load_ad(path):
         ad = read_h5ad(path, backed='r', dask=dask)
         X = compute(ad.X)
+        if isinstance(X, SparseDataset):
+            X = X.value
         rows, cols = X.nonzero()
         nnz = list(zip(list(rows), list(cols)))
         return Obj(dict(ad=ad, nnz=nnz, obs=compute(ad.obs), var=compute(ad.var)), default=ad)
@@ -123,7 +126,9 @@ def test_dask_load(path):
         lambda ad: ad.X[:20,:20],
     ))
 
-    check(lambda ad: ad[:10])
+    def ss(ad):
+        return ad[:10]
+    check(ss)
 
     # These work when we add deferred() around all .iloc calls and things that use them.
     check((
