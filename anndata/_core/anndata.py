@@ -684,43 +684,50 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         """Shape of data matrix (:attr:`n_obs`, :attr:`n_vars`)."""
         return self.n_obs, self.n_vars
 
+    def _X_from_dask(self):
+        from anndata._io.dask.hdf5.load_array import load_dask_array
+        if self._X is None:
+            if self.is_view:
+                X = self._adata_ref.X[self._oidx, self._vidx]
+            else:
+                X = load_dask_array(path=self.file.filename, key='X',
+                                    format_str='csr', shape=self.shape)
+                # NOTE: The original code has logic for when the backed X
+                # comes from a Dataset below.  See the TODO below.
+            self._X = X
+        else:
+            X = load_dask_array(path=self.file.filename, key='X',
+                                format_str='csr', shape=self.shape)
+        return self._X
+
     @property
     def X(self) -> Optional[Union[np.ndarray, sparse.spmatrix, ArrayView]]:
         """Data matrix of shape :attr:`n_obs` × :attr:`n_vars`."""
-        if self.isbacked:
-            def load_x_from_h5ad():
-                if not self.file.is_open:
-                    self.file.open()
-                X = self.file["X"]
-                if isinstance(X, h5py.Group):
-                    X = SparseDataset(X)
+        if self._dask:
+            return self._X_from_dask()
+        elif self.isbacked:
+            if not self.file.is_open:
+                self.file.open()
+            X = self.file["X"]
+            if isinstance(X, h5py.Group):
+                X = SparseDataset(X)
 
-                # TODO: This should get replaced/ handled elsewhere
-                # This is so that we can index into a backed dense dataset with
-                # indices that aren’t strictly increasing
-                if self.is_view and isinstance(X, h5py.Dataset):
-                    ordered = [self._oidx, self._vidx]  # this will be mutated
-                    rev_order = [slice(None), slice(None)]
-                    for axis, axis_idx in enumerate(ordered.copy()):
-                        if isinstance(axis_idx, np.ndarray) and axis_idx.dtype.type != bool:
-                            order = np.argsort(axis_idx)
-                            ordered[axis] = axis_idx[order]
-                            rev_order[axis] = np.argsort(order)
-                    # from hdf5, then to real order
-                    X = X[tuple(ordered)][tuple(rev_order)]
-                elif self.is_view:
-                    X = X[self._oidx, self._vidx]
-                # Why do we not set _X?  This work is repeated? -ssmith
-                return X
-            if self._dask:
-                from anndata._io.dask.hdf5.load_array import load_dask_array
-                if self._X is None:
-                    self._X = load_dask_array(path=self.file.filename, key='X', format_str='csr', shape=self.shape)
-                X = self._X
-            else:
-                if self._X is None:
-                    self._X = load_x_from_h5ad()
-                X = self._X
+            # TODO: This should get replaced/ handled elsewhere
+            # This is so that we can index into a backed dense dataset with
+            # indices that aren’t strictly increasing
+            if self.is_view and isinstance(X, h5py.Dataset):
+                ordered = [self._oidx, self._vidx]  # this will be mutated
+                rev_order = [slice(None), slice(None)]
+                for axis, axis_idx in enumerate(ordered.copy()):
+                    if isinstance(axis_idx, np.ndarray) and axis_idx.dtype.type != bool:
+                        order = np.argsort(axis_idx)
+                        ordered[axis] = axis_idx[order]
+                        rev_order[axis] = np.argsort(order)
+                # from hdf5, then to real order
+                X = X[tuple(ordered)][tuple(rev_order)]
+            elif self.is_view:
+                X = X[self._oidx, self._vidx]
+            return X
         elif self.is_view:
             X = as_view(
                 _subset(self._adata_ref.X, (self._oidx, self._vidx)),
