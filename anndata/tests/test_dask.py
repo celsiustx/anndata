@@ -75,7 +75,15 @@ def test_dask_load(path):
     @singledispatch
     def check(fn):
         if callable(fn):
-            eq(fn(ad1), fn(ad2))
+            try:
+                v1 = fn(ad1)
+                v2 = fn(ad2)
+                eq(v1, v2)
+            except Exception as e:
+                v1 = fn(ad1)
+                v2 = fn(ad2)
+                eq(v1, v2)
+                raise e
         else:
             raise NotImplementedError
 
@@ -114,6 +122,8 @@ def test_dask_load(path):
         lambda ad: ad.X[:10],
         lambda ad: ad.X[:20,:20],
     ))
+
+    check(lambda ad: ad[:10])
 
     # These work when we add deferred() around all .iloc calls and things that use them.
     check((

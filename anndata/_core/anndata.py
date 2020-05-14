@@ -401,8 +401,10 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             self._varp = daskify_method_call(adata_ref.varp, "_view", self, vidx)
 
             # Special case for old neighbors, backwards compat. Remove in anndata 0.8.
-            uns_new = daskify_call(_slice_uns_sparse_matrices,
-                                   adata_ref._uns, self._oidx, adata_ref.n_obs)
+            uns_new1 = daskify_call(_slice_uns_sparse_matrices, adata_ref._uns, self._oidx, adata_ref.n_obs)
+            uns_new2 = daskify_method_call(self, "_remove_unused_categories", adata_ref.obs, obs_sub, uns_new1, inplace=False)
+            uns_new = daskify_method_call(self, "_remove_unused_categories", adata_ref.var, var_sub, uns_new2, inplace=False)
+
             self._n_obs = n_obs
             self._n_vars = n_vars
         else:
@@ -420,9 +422,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             self._n_obs = len(obs_sub)
             self._n_vars = len(var_sub)
 
-        # fix categories
-        self._remove_unused_categories(adata_ref.obs, obs_sub, uns_new)
-        self._remove_unused_categories(adata_ref.var, var_sub, uns_new)
+            # fix categories
+            self._remove_unused_categories(adata_ref.obs, obs_sub, uns_new, inplace=True)
+            self._remove_unused_categories(adata_ref.var, var_sub, uns_new, inplace=True)
 
         # set attributes
         if dask:
@@ -716,7 +718,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                     self._X = load_dask_array(path=self.file.filename, key='X', format_str='csr', shape=self.shape)
                 X = self._X
             else:
-                return load_x_from_h5ad()
+                if self._X is None:
+                    self._X = load_x_from_h5ad()
+                X = self._X
         elif self.is_view:
             X = as_view(
                 _subset(self._adata_ref.X, (self._oidx, self._vidx)),
@@ -1203,8 +1207,12 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         oidx, vidx = self._normalize_indices(index)
         return AnnData(self, oidx=oidx, vidx=vidx, asview=True, dask=self._dask)
 
-    def _remove_unused_categories(self, df_full, df_sub, uns):
+    def _remove_unused_categories(self, df_full, df_sub, uns, inplace=True):
         from pandas.api.types import is_categorical
+
+        if not inplace:
+            # Dask requires that we not let this mutate the real object.
+            uns = uns.copy()
 
         for k in df_full:
             if not is_categorical(df_full[k]):
@@ -1225,6 +1233,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             else:
                 idx = np.where(np.in1d(all_categories, df_sub[k].cat.categories))[0]
                 uns[color_key] = np.array(color_vec)[(idx,)]
+
+        if not inplace:
+            return uns
 
     def rename_categories(self, key: str, categories: Sequence[Any]):
         """\
