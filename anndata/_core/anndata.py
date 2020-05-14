@@ -5,9 +5,6 @@ import warnings
 import collections.abc as cabc
 from collections import OrderedDict
 from copy import deepcopy
-from dask import dataframe as dd
-from dask.array.backends import register_scipy_sparse
-register_scipy_sparse()
 
 from enum import Enum
 from functools import reduce, singledispatch
@@ -120,15 +117,6 @@ def _gen_dataframe(anno, length, index_names):
 
 
 @_gen_dataframe.register(pd.DataFrame)
-def _(anno, length, index_names):
-    anno = anno.copy()
-    if not is_string_dtype(anno.index):
-        warnings.warn("Transforming to str index.", ImplicitModificationWarning)
-        anno.index = anno.index.astype(str)
-    return anno
-
-
-@_gen_dataframe.register(dd.DataFrame)
 def _(anno, length, index_names):
     anno = anno.copy()
     if not is_string_dtype(anno.index):
@@ -315,24 +303,17 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         oidx: Index1D = None,
         vidx: Index1D = None,
     ):
-        # Sanity check to ensure everything that shoudl goed through AnnDataDask
-        from anndata._io.dask.utils import is_dask
+        # Sanity check to ensure everything that should go through AnnDataDask does.
+        from anndata_daskified import is_dask
         if any(is_dask(v) for v in (X, obs, var, uns)):
             import anndata_daskified
             if not isinstance(self, anndata_daskified.AnnDataDask):
                 raise ValueError("Dask attributes should only be used on an AnnDataDask!")
 
-        # TODO: Remove
-        self._dask = False
-
         if asview:
-            import anndata_daskified
             if not isinstance(X, AnnData):
                 raise ValueError("`X` has to be an AnnData object.")
-            if self._dask and not isinstance(self, anndata_daskified.AnnDataDask):
-                anndata_daskified._init_as_view(self, X, oidx, vidx)
-            else:
-                self._init_as_view(X, oidx, vidx)
+            self._init_as_view(X, oidx, vidx)
         else:
             self._init_as_actual(
                 X=X,
@@ -428,7 +409,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         filemode=None,
         fd=None
     ):
-        from anndata._io.dask.utils import is_dask
+        from anndata_daskified import is_dask
 
         # view attributes
         self._is_view = False
@@ -543,7 +524,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 raise ValueError(f"Index of {attr_name} must match {x_name} of X.")
 
         # unstructured annotations
-        self.uns = uns or OrderedDict()
+        # NOTE: This is setting ._uns instead of .uns because .uns is a @property
+        # with side-effects that don't occur here, and can never occur on certain subclasses.
+        self._uns = uns or OrderedDict()
 
         # TODO: Think about consequences of making obsm a group in hdf
         self._obsm = AxisArrays(self, 0, vals=convert_to_dict(obsm))
@@ -585,8 +568,6 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         return size
 
     def _gen_repr(self, n_obs, n_vars) -> str:
-        from anndata._io.dask.utils import is_dask
-
         if self.isbacked:
             backed_at = f"backed at {str(self.filename)!r}"
         else:
@@ -603,19 +584,13 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             "varp",
         ]:
             obj = getattr(self, attr)
-            if is_dask(obj):
-                descr += f"\n    {attr}: {str(obj)}"
-            elif hasattr(obj, 'keys'):
+            if hasattr(obj, 'keys'):
                 keys = getattr(self, attr).keys()
                 if len(keys) > 0:
                     descr += f"\n    {attr}: {str(list(keys))[1:-1]}"
             else:
-                from dask.dataframe import DataFrame
-                if isinstance(obj, DataFrame):
-                    descr += f"\n    {attr}: {str(obj.columns.tolist())[1:-1]}"
-                else:
-                    from sys import stderr
-                    stderr.write(f'Unknown attr type {type(obj)}: {obj}\n')
+                from sys import stderr
+                stderr.write(f'Unknown attr type {type(obj)}: {obj}\n')
 
         return descr
 
@@ -640,10 +615,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     @property
     def X(self) -> Optional[Union[np.ndarray, sparse.spmatrix, ArrayView]]:
         """Data matrix of shape :attr:`n_obs` × :attr:`n_vars`."""
-        if self._dask:
-            import anndata_daskified
-            return anndata_daskified.X(self)
-        elif self.isbacked:
+        if self.isbacked:
             if not self.file.is_open:
                 self.file.open()
             X = self.file["X"]
@@ -934,11 +906,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         """Unstructured annotation (ordered dictionary)."""
         uns = _overloaded_uns(self)
         if self.is_view:
-            from anndata._io.dask.utils import is_dask, daskify_call
-            if self._dask or is_dask(uns):
-                def uns_to_dictview(uns_, anndata):
-                    return DictView(uns_, view_args=(anndata, "uns"))
-                uns = daskify_call(uns_to_dictview, uns, self)
+            from anndata_daskified import is_dask
+            if is_dask(uns):
+                raise ValueError("Use AnnDataDask for daskified uns or AnnData!")
             else:
                 uns = DictView(uns, view_args=(self, "uns"))
         return uns
@@ -1481,7 +1451,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
     def copy(self, filename: Optional[PathLike] = None) -> "AnnData":
         """Full copy, optionally on disk."""
-        from anndata._io.dask.utils import is_dask, daskify_method_call
+        from anndata_daskified import is_dask
         if not self.isbacked:
             if self.is_view:
                 # TODO: How do I unambiguously check if this is a copy?
@@ -1495,13 +1465,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             if X is not None:
                 dtype = X.dtype
                 if (not (X.shape is self.shape)) and (is_dask(X.shape) or is_dask(self.shape)):
-                    def x_reshape(X, Xshape, anndata_shape):
-                        # This is a little ugly b/c we need the X.shape to compute
-                        # before we work on the X that has it.
-                        X.shape = Xshape
-                        X.reshape(anndata_shape)
-                    from anndata._io.dask.utils import daskify_call
-                    X = daskify_call(x_reshape, X, X.shape, self.shape)
+                    raise ValueError("Use the AnnDataDask suclass if the shape is daskified!")
                 elif X.shape != self.shape:
                     X = X.reshape(self.shape)
             else:
@@ -1534,13 +1498,6 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             mode = self.file._filemode
             self.write(filename)
             return read_h5ad(filename, backed=mode)
-
-    def compute(self, *args, **kwargs):
-        from anndata._io.dask.utils import compute_anndata
-        if not self._dask:
-            return self
-        else:
-            return compute_anndata(self, *args, **kwargs)
 
     def diff_summary(self, other: "AnnData"):
         from anndata.diff import diff_summary

@@ -1,7 +1,6 @@
 
 import functools
 from logging import getLogger
-from typing import Optional, List
 
 import pandas as pd
 import numpy as np
@@ -9,13 +8,9 @@ import numpy as np
 import dask
 import dask.dataframe
 import dask.array
-
+from anndata_daskified import is_dask
 
 logger = getLogger(__file__)
-
-
-def is_dask(obj) -> bool:
-    return isinstance(obj, dask.base.DaskMethodsMixin)
 
 
 def daskify_call(f, *args, _dask_len=None, _dask_output_types=None, **kwargs):
