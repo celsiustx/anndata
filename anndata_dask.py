@@ -363,12 +363,17 @@ class AnnDataDask(AnnData):
             return read_h5ad(filename, backed=mode, dask=True)
 
     def _raw_copy(self):
+        # TODO: This triggers an odd error later in the code when turned-on.
+        # It is unclear if it is really needed where it is used.  If so, debug.
+        # "Series getitem in only supported for other series objects "
         return self
+        """
         cls = self.__class__
         new = cls.__new__(cls)
         for attr, val in self.__dict__.items():
-            setattr(self, attr, val)
+            setattr(new, attr, val)
         return new
+        """
 
     def copy_with_changes(self: "AnnDataDask", **kwargs):
         kw = dict(
