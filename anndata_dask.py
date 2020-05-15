@@ -102,7 +102,10 @@ class AnnDataDask(AnnData):
                 n_obs = daskify_get_len_given_slice(oidx, adata_ref.n_obs)
             else:
                 n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
-            obs_sub = daskify_iloc(adata_ref.obs, oidx)
+            if is_dask(adata_ref.obs) or is_dask(oidx):
+                obs_sub = daskify_iloc(adata_ref.obs, oidx)
+            else:
+                obs_sub = adata_ref.obs.iloc[oidx]
 
         if (not is_dask(vidx)) and vidx == slice(None, None, None):
             # If we didnt' slice var, just return the original.
@@ -113,7 +116,11 @@ class AnnDataDask(AnnData):
                 n_vars = daskify_get_len_given_slice(vidx, adata_ref.n_vars)
             else:
                 n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
-            var_sub = daskify_iloc(adata_ref.var, vidx)
+            if is_dask(adata_ref.var) or is_dask(vidx):
+                var_sub = daskify_iloc(adata_ref.var, vidx)
+            else:
+                var_sub = adata_ref.var.iloc[vidx]
+
 
         self._obsm = daskify_method_call(adata_ref.obsm, "_view", self, (oidx,))
         self._varm = daskify_method_call(adata_ref.obsm, "_view", self, (vidx,))
