@@ -73,17 +73,14 @@ def test_cmp_new_old_h5ad(dask):
 @pytest.mark.parametrize('path', [old_path, new_path])
 def test_dask_load(path):
     ad1 = read_h5ad(path, dask=False)
-    ad2 = read_h5ad(path, backed='r', dask= True)
+    ad2 = read_h5ad(path, backed='r', dask=True)
 
     @singledispatch
     def check(fn):
         if callable(fn):
             v_mem = fn(ad1)
             v_dask = fn(ad2)
-            try:
-                eq(v_mem, v_dask)
-            except Exception as e:
-                eq(v_mem, v_dask)
+            eq(v_mem, v_dask)
         else:
             raise NotImplementedError
 
