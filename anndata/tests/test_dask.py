@@ -1,5 +1,8 @@
+import functools
+from dataclasses import dataclass
 from functools import singledispatch
 from pathlib import Path
+from typing import Union
 
 import pytest
 
@@ -13,8 +16,9 @@ from .._core.sparse_dataset import SparseDataset
 package_root = Path(anndata.__file__).parent.parent
 new_path = package_root / 'new.h5ad'
 old_path = package_root / 'old.h5ad'  # written by running `make_test_h5ad` in AnnData 0.6.22
-assert(new_path.exists())
-assert(old_path.exists())
+assert (new_path.exists())
+assert (old_path.exists())
+
 
 @pytest.mark.parametrize('dask', [True, False])
 def test_cmp_new_old_h5ad(dask):
@@ -22,6 +26,7 @@ def test_cmp_new_old_h5ad(dask):
     C = 200
 
     ad = make_test_h5ad()
+
     def write(path, overwrite=False):
         if path.exists() and overwrite:
             path.unlink()
@@ -31,7 +36,8 @@ def test_cmp_new_old_h5ad(dask):
     overwrite = False
     write(new_path, overwrite=overwrite)
 
-    def compute(o): return o.compute() if dask else o
+    def compute(o):
+        return o.compute() if dask else o
 
     def load_ad(path):
         ad = read_h5ad(path, backed='r', dask=dask)
@@ -40,7 +46,8 @@ def test_cmp_new_old_h5ad(dask):
             X = X.value
         rows, cols = X.nonzero()
         nnz = list(zip(list(rows), list(cols)))
-        return Obj(dict(ad=ad, nnz=nnz, obs=compute(ad.obs), var=compute(ad.var)), default=ad)
+        return Obj(dict(ad=ad, nnz=nnz, obs=compute(ad.obs), var=compute(ad.var)),
+                   default=ad)
 
     old = load_ad(old_path)
     new = load_ad(new_path)
@@ -109,15 +116,15 @@ def test_dask_load(path):
 
         lambda ad: ad.obs.Prime,
         lambda ad: ad.obs['Prime'],
-        lambda ad: ad.obs[['Prime','idx²']],
+        lambda ad: ad.obs[['Prime', 'idx²']],
 
         lambda ad: ad.var.name,
         lambda ad: ad.var['name'],
-        lambda ad: ad.var[['sqrt(idx)','name']],
+        lambda ad: ad.var[['sqrt(idx)', 'name']],
 
         lambda ad: ad.X[:],
         lambda ad: ad.X[:10],
-        lambda ad: ad.X[:20,:20],
+        lambda ad: ad.X[:20, :20],
     ))
 
     # These work when we add deferred() around all .iloc calls and things that use them.
@@ -138,22 +145,56 @@ def test_dask_load(path):
     TODO = [
         # iloc'ing row(s)/col(s) mostly does not work out, of the box:
 
-        lambda ad: ad.obs.loc['2','Prime'],
+        lambda ad: ad.obs.loc['2', 'Prime'],
 
         # .loc'ing ranges
-        lambda ad: ad.obs.loc[:,:],
-        lambda ad: ad.obs.loc[:,['Prime','label']],
-        lambda ad: ad.obs.loc[:,'label'],
+        lambda ad: ad.obs.loc[:, :],
+        lambda ad: ad.obs.loc[:, ['Prime', 'label']],
+        lambda ad: ad.obs.loc[:, 'label'],
 
         # Integer ranges don't work in .loc because obs.index holds strs; this is true in non-dask mode, but seems broken
-        lambda ad: ad.obs.loc[:10,:],
-        lambda ad: ad.obs.loc[:10,['Prime','label']],
-        lambda ad: ad.obs.loc[:10,'label'],
+        lambda ad: ad.obs.loc[:10, :],
+        lambda ad: ad.obs.loc[:10, ['Prime', 'label']],
+        lambda ad: ad.obs.loc[:10, 'label'],
 
         # these work, but Dask returns a DF (to Pandas' Series)
-        lambda ad: ad.obs.loc['10',['Prime','label']],
-        lambda ad: ad.obs.loc['10',:],
+        lambda ad: ad.obs.loc['10', ['Prime', 'label']],
+        lambda ad: ad.obs.loc['10', :],
 
         # works, but Dask returns a Series (to Pandas' scalar)
-        lambda ad: ad.obs.loc['10','label'],
+        lambda ad: ad.obs.loc['10', 'label'],
     ]
+
+
+class PreventedMethodCallException(Exception):
+    def __init__(self, cls: type, method_name: str,
+                 args: Union[list, tuple], kwargs: dict, orig: callable):
+        self.cls = cls
+        self.method_name = method_name
+        self.args = args
+        self.kwargs = kwargs
+        self.orig = orig
+
+
+def prevent_method_calls(cls, method_name):
+    from unittest.mock import patch
+    orig = getattr(cls, method_name)
+    @functools.wraps(orig)
+    def wrapper(*args, **kwargs):
+        raise PreventedMethodCallException(cls=cls, method_name=method_name,
+                                           args=args, kwargs=kwargs, orig=orig)
+    ctx = patch.object(cls, method_name, wrapper)
+    return ctx
+
+
+@pytest.mark.parametrize('path', [old_path])
+def test_load_without_compute(path):
+    import dask.base
+
+    with prevent_method_calls(dask.base.DaskMethodsMixin, 'compute') as c:
+        # This should not call compute() on anything...
+        ad = read_h5ad(path, backed='r', dask=True)
+
+        # This should.
+        with pytest.raises(PreventedMethodCallException):
+            ad.obs.compute()
