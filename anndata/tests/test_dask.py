@@ -78,15 +78,12 @@ def test_dask_load(path):
     @singledispatch
     def check(fn):
         if callable(fn):
+            v_mem = fn(ad1)
+            v_dask = fn(ad2)
             try:
-                v1 = fn(ad1)
-                v2 = fn(ad2)
-                eq(v1, v2)
+                eq(v_mem, v_dask)
             except Exception as e:
-                v1 = fn(ad1)
-                v2 = fn(ad2)
-                eq(v1, v2)
-                raise e
+                eq(v_mem, v_dask)
         else:
             raise NotImplementedError
 

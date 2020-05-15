@@ -82,7 +82,7 @@ def _(l, r):
 
 from anndata import AnnData
 @eq.register(AnnData)
-def _(l, r):
+def _(l: AnnData, r: AnnData):
     for k in ['X','obs','var',]:
         lv = getattr(l, k)
         rv = getattr(r, k)
@@ -91,6 +91,9 @@ def _(l, r):
         if isinstance(rv, DaskMethodsMixin):
             rv = rv.compute()
         eq(lv, rv)
+    differences = r.diff_summary(l)
+    assert(differences == {})
+
 
 def cmp(l, r):
     eq(

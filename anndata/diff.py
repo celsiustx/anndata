@@ -2,9 +2,11 @@ from typing import List, Optional, Union
 import numpy as np
 import pandas as pd
 import scipy.sparse
+from scipy.sparse import issparse
 
 import anndata
-from anndata._core.aligned_mapping import AxisArrays
+from anndata._core.aligned_mapping import AxisArrays, AxisArraysView, LayersView, \
+    PairwiseArraysView
 from anndata_dask import is_dask
 
 DIFF_PARTS = ['X', 'obs', 'var', 'uns', 'obsm', 'varm', 'layers', 'raw',
@@ -36,9 +38,17 @@ def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[
         bb = getattr(b, part)
 
         if is_dask(aa):
-            aa = aa.compute()
+            try:
+                aa = aa.compute()
+            except Exception as e:
+                changes[part] = "%s does not compute for A %s!: %s" % (part, aa, e)
+                continue
         if is_dask(bb):
-            bb = bb.compute()
+            try:
+                bb = bb.compute()
+            except Exception as e:
+                changes[part] = "%s does not compute for B %s!: %s" % (part,bb,  e)
+                continue
 
         if aa is None or bb is None:
             if aa is None and bb is None:
@@ -53,19 +63,19 @@ def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[
         if isinstance(bb, anndata._core.sparse_dataset.SparseDataset):
             bb = bb.value
 
-        if type(aa) != type(bb):
-            changes[part] = "class mismatch: %s => %s" % (aa.__class__, bb.__class__)
-            continue
-
-        if isinstance(aa, scipy.sparse.csr.csr_matrix):
+        if issparse(aa) and issparse(bb):
             cnt = (aa != bb).nnz
             if cnt != 0:
                 changes[part] = "count of differences between sparse arrays: %s" % cnt
+        elif type(aa) != type(bb):
+            changes[part] = "class mismatch: %s => %s" % (aa.__class__, bb.__class__)
         elif isinstance(aa, pd.DataFrame):
             delta = diff_df(aa, bb)
             if delta is not None:
                 changes[part] = str(delta) # Let pandas make a nice string.
-        elif isinstance(aa, (list, tuple, AxisArrays)):
+        elif isinstance(aa, (list, tuple, AxisArrays, AxisArraysView, LayersView,
+                             PairwiseArraysView)):
+            # Default in most cases hopefully.
             if aa != bb:
                 changes[part] = "differ: %s => %s" % (aa, bb)
         else:

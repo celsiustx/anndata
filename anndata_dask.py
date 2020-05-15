@@ -27,6 +27,8 @@ from scipy import sparse
 from scipy.sparse import issparse
 
 import dask
+import dask.dataframe
+import dask.array
 from dask.array.backends import register_scipy_sparse
 
 from anndata._core.anndata import _gen_dataframe
