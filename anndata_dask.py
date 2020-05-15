@@ -1,24 +1,24 @@
-import warnings
-import collections.abc as cabc
-from collections import OrderedDict
+
+#
+# The module contains AnnDataDask, a subclass of AnnData.
+#
+# It also contains the daskify_* utility functions used elsewhere in this package,
+# and the is_dask() function.
+#
+# The eventual home of this class is TBD, but the current strategy is:
+# - AnnData has no dask-specific logic except error messages.
+# - AnnDataDask has all of the dask overrides.
+# - Other functions and objects may or may not have dask-awareness internally.
+#   ^^ Ideally we remove this too, but it is trickier.
+#
+
 from copy import deepcopy
-
-import dask
-from anndata._core.anndata import AnnData, ImplicitModificationWarning
-from dask import dataframe as dd
-from dask.array.backends import register_scipy_sparse
-register_scipy_sparse()
-
-from enum import Enum
-from functools import reduce, singledispatch
-from pathlib import Path
+import functools
 from os import PathLike
 from typing import Any, Union, Optional  # Meta
-from typing import Iterable, Sequence, Mapping, MutableMapping  # Generic ABCs
-from typing import Tuple, List  # Generic
+from typing import Iterable, Sequence, Mapping, MutableMapping, Tuple, List  # Generic ABCs
+import warnings
 
-import h5py
-from natsort import natsorted
 import numpy as np
 from numpy import ma
 import pandas as pd
@@ -26,46 +26,34 @@ from pandas.api.types import is_string_dtype, is_categorical
 from scipy import sparse
 from scipy.sparse import issparse
 
-from anndata._core.raw import Raw
-from anndata._core.index import _normalize_indices, _subset, Index, Index1D, get_vector
-from anndata._core.file_backing import AnnDataFileManager
-from anndata._core.access import ElementRef
+import dask
+from dask.array.backends import register_scipy_sparse
+
+from anndata._core.anndata import _gen_dataframe
+from anndata._core.anndata import AnnData, ImplicitModificationWarning
+from anndata._io.dask.hdf5.load_array import load_dask_array
+from anndata._core.index import _subset, Index
 from anndata._core.aligned_mapping import (
     AxisArrays,
-    AxisArraysView,
     PairwiseArrays,
-    PairwiseArraysView,
-    Layers,
-    LayersView,
 )
 from anndata._core.views import (
-    ArrayView,
     DictView,
     DataFrameView,
-    as_view,
     _resolve_idxs,
 )
-from anndata._core.merge import merge_uns
-from anndata._core.sparse_dataset import SparseDataset
-from anndata import utils
-from anndata.utils import convert_to_dict, ensure_df_homogeneous
+from anndata.utils import convert_to_dict
 from anndata.logging import anndata_logger as logger
 from anndata.compat import (
-    ZarrArray,
-    ZappyArray,
-    DaskArray,
-    DaskDelayed,
-    Literal,
     _slice_uns_sparse_matrices,
-    _move_adj_mtx,
-    _overloaded_uns,
-    OverloadedDict,
 )
 
-####
 
-from dask.array.backends import register_scipy_sparse
 register_scipy_sparse()
+
+
+def is_dask(obj) -> bool:
+    return isinstance(obj, dask.base.DaskMethodsMixin)
 
 
 class AnnDataDask(AnnData):
@@ -73,8 +61,6 @@ class AnnDataDask(AnnData):
         super().__init__(*args, **kwargs)
 
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
-        from anndata._io.dask.utils import daskify_call, daskify_method_call, \
-            daskify_iloc, daskify_get_len_given_slice
 
         ### BEGIN COPIED FROM ORIGINAL
         if is_dask(adata_ref) or is_dask(oidx) or is_dask(vidx):
@@ -124,10 +110,9 @@ class AnnDataDask(AnnData):
                 n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
             var_sub = daskify_iloc(adata_ref.var, vidx)
 
-        self._obsm = daskify_method_call(adata_ref.obsm, "iloc", oidx)
-        self._varm = daskify_method_call(adata_ref.obsm, "iloc", oidx)
-        self._layers = daskify_method_call(adata_ref.layers, "_view", self,
-                                           (oidx, vidx))
+        self._obsm = daskify_method_call(adata_ref.obsm, "_view", self, (oidx,))
+        self._varm = daskify_method_call(adata_ref.obsm, "_view", self, (vidx,))
+        self._layers = daskify_method_call(adata_ref.layers, "_view", self, (oidx, vidx))
         self._obsp = daskify_method_call(adata_ref.obsp, "_view", self, oidx)
         self._varp = daskify_method_call(adata_ref.varp, "_view", self, vidx)
 
@@ -148,7 +133,7 @@ class AnnDataDask(AnnData):
         def mk_dataframe_view(sub, ann, key):
             return DataFrameView(sub, view_args=(ann, key))
 
-        def mk_dict_view(dat, ann):
+        def mk_dict_view(dat, ann, key):
             return DictView(dat, view_args=(ann, key))
 
         self._obs = daskify_call(mk_dataframe_view, obs_sub, self, "obs")
@@ -168,6 +153,27 @@ class AnnDataDask(AnnData):
         else:
             self._raw = None
         ### END COPIED FROM ORIGINAL
+
+    def _create_axis_arrays(self, axis, vals_raw):
+        if is_dask(self.obs) or is_dask(self.var):
+            # This is a little ugly.  We have a child object that reads cousin attributes
+            # on the parent: obs_names and var_names.
+            # If obs_names or var_names are delayed, we don't want to
+            # wait for the whole AnnData to compute,
+            # because we will have a circularity problem.  Plus it may never.
+            def mk_axis_arrays(obs, var, vals_raw):
+                safe_copy = self._raw_copy()
+                self._obs = obs
+                self._var = var
+                return AxisArrays(safe_copy, axis, vals=convert_to_dict(vals_raw))
+            return daskify_call(mk_axis_arrays, self.obs, self.var, vals_raw)
+        elif is_dask(vals_raw):
+            return daskify_call(AxisArrays, self.obs_names, self.var_names, vals_raw)
+        else:
+            return AxisArrays(self, axis, vals=convert_to_dict(vals_raw))
+
+    def _create_pairwise_arrays(self, axis, vals_raw):
+        return PairwiseArrays(self, axis, vals=convert_to_dict(vals_raw))
 
     def _gen_repr(self, n_obs, n_vars) -> str:
 
@@ -205,7 +211,6 @@ class AnnDataDask(AnnData):
 
     @property
     def X(self):
-        from anndata._io.dask.hdf5.load_array import load_dask_array
         if self._X is None:
             if self.is_view:
                 X = self._adata_ref.X[self._oidx, self._vidx]
@@ -230,14 +235,47 @@ class AnnDataDask(AnnData):
         oidx, vidx = self._normalize_indices(index)
         return self.__class__(self, oidx=oidx, vidx=vidx, asview=True)
 
-    def compute(self, *args, **kwargs):
-        from anndata._io.dask.utils import compute_anndata
-        return compute_anndata(self, *args, **kwargs)
+    def compute(self, *args, _debug:bool=False, **kwargs):
+        def _compute_anndata(X, **raw_attr_value_pairs):
+            # Construct an AnnData at a low-level,
+            # swapping out each of the attributes specified.
+            an = AnnData.__new__(AnnData)
+            for key, value in raw_attr_value_pairs.items():
+                setattr(an, key, value)
+            if hasattr(X, "tocsr"):
+                X = X.tocsr()
+            an._X = X
+            an._dask = False
+            return an
 
+        # Passing the attribute this way will automatically put them into
+        # the graph in parallel:
+        attribute_value_pairs = self.__dict__.copy()
+
+        if _debug:
+            # Rather than compute everything in dask,
+            # iterate through the attributes and compute each individually.
+            for key, value in (attribute_value_pairs.items()):
+                if hasattr(value, "compute"):
+                    try:
+                        value_computed = value.compute()
+                        attribute_value_pairs[key] = value_computed
+                    except Exception as e:
+                        # Break here to examine failures.
+                        logger.error("Error computing %s: %s" % (key, e))
+                        value_computed = value.compute()
+                        pass
+
+        virtual = daskify_call(_compute_anndata, self.X, **attribute_value_pairs)
+        real = virtual.compute(*args, **kwargs)
+        return real
+
+    # NOTE: We override the property accessor but not set/delete.
+    # The .uns is immutable on AnnDataDask.  Use .copy_with_changes(...)
+    # to make an alterenate AnnDataDask with an update.
     @property
     def uns(self) -> MutableMapping:
         """Unstructured annotation (ordered dictionary)."""
-        from anndata._io.dask.utils import daskify_call
         import anndata._core
         uns_overloaded = daskify_call(anndata._core.anndata._overloaded_uns, self)
         if self.is_view:
@@ -246,10 +284,12 @@ class AnnDataDask(AnnData):
             uns_overloaded = daskify_call(uns_to_dictview, uns_overloaded, self)
         return uns_overloaded
 
+    def _check_dimensions(self, key=None):
+        # These checks can't occur until the data is vivified.
+        pass
 
     def copy(self, filename: Optional[PathLike] = None) -> "AnnData":
         """Full copy, optionally on disk."""
-        from anndata._io.dask.utils import daskify_method_call
         if not self.isbacked:
             # TODO: We should _only_ have views in the dask=True case b/c otherwise backed = True.
             # See if this logic can simplify.
@@ -271,7 +311,6 @@ class AnnDataDask(AnnData):
                         # before we work on the X that has it.
                         X.shape = Xshape
                         X.reshape(anndata_shape)
-                    from anndata._io.dask.utils import daskify_call
                     X = daskify_call(x_reshape, X, X.shape, self.shape)
                 elif X.shape != self.shape:
                     X = X.reshape(self.shape)
@@ -296,7 +335,7 @@ class AnnDataDask(AnnData):
             )
         else:
             # A normal backed/dask object
-            from .._io import read_h5ad
+            from anndata._io import read_h5ad
 
             if filename is None:
                 raise ValueError(
@@ -307,9 +346,34 @@ class AnnDataDask(AnnData):
             self.write(filename)
             return read_h5ad(filename, backed=mode, dask=True)
 
-from anndata._core.anndata import _gen_dataframe
+    def _raw_copy(self):
+        return self
+        cls = self.__class__
+        new = cls.__new__(cls)
+        for attr, val in self.__dict__.items():
+            setattr(self, attr, val)
+        return new
 
-@_gen_dataframe.register(dd.DataFrame)
+    def copy_with_changes(self: "AnnDataDask", **kwargs):
+        kw = dict(
+            X=self.X,
+            obs=self.obs,
+            var=self.var,
+            uns=self.uns,
+            obsm=self.obsm,
+            varm=self.varm,
+            obsp=self.obsp,
+            varp=self.varp,
+            layers=self.layers,
+            raw=self.raw,
+            dtype=self._dtype,
+            shape=self.shape
+        )
+        kw.update(**kwargs)
+        return self.__class__(**kw)
+
+
+@_gen_dataframe.register(dask.dataframe.DataFrame)
 def _(anno, length, index_names):
     anno = anno.copy()
     if not is_string_dtype(anno.index):
@@ -318,5 +382,98 @@ def _(anno, length, index_names):
     return anno
 
 
-def is_dask(obj) -> bool:
-    return isinstance(obj, dask.base.DaskMethodsMixin)
+def daskify_get_len_given_slice(slc: slice, orig_len: int):
+    def get_size(slc_, orig_len_):
+        len(range(*slc_.indices(orig_len_)))
+    return daskify_call(slc, orig_len)
+
+
+def daskify_iloc(df, idx):
+    def call_iloc(df_, idx_):
+        return df_.iloc[idx_]
+    meta = df._meta
+    if meta is None:
+        pass
+    df = daskify_call_return_df(call_iloc, df, idx, _dask_meta=meta)
+    return df
+
+
+def daskify_call(f, *args, _dask_len=None, _dask_output_types=None, **kwargs):
+    # Call a function with delayed() and do some checking around it.
+
+    @functools.wraps(f)
+    def inner(*args, **kwargs):
+        retval = f(*args, **kwargs)
+        if _dask_output_types is not None:
+            if not isinstance(retval, _dask_output_types):
+                logger.warning("Expected output type %s, got %s in %s!"
+                               % (_dask_output_types, retval, f))
+        if _dask_len is not None:
+            length = len(retval)
+            if length != _dask_len:
+                logger.warning("Expected length %s, got %s on %s!"
+                               % (_dask_len, length, retval))
+        return retval
+
+    # TODO: Set _len if possible.
+    return dask.delayed(inner)(*args, **kwargs)
+
+
+def daskify_method_call(obj, method_name, *args, _dask_obj_type=None, _dask_len=None, **kwargs):
+    def call_method(obj_, method_name_, *args, **kwargs):
+        if _dask_obj_type is not None:
+            if not isinstance(obj_, _dask_obj_type):
+                logger.warning("Expected object type %s, got %s in %s!"
+                               % (_dask_obj_type, obj_, method_name_))
+        bound_method = getattr(obj_, method_name_)
+        return bound_method(*args, **kwargs)
+
+    return daskify_call(call_method, obj, method_name, *args, _dask_len=_dask_len, **kwargs)
+
+
+def daskify_calc_shape(old_shape, one_slice_per_dim):
+    def get_new_len(dim_len, dim_slice):
+        if dim_slice == slice(None, None, None):
+            return dim_len
+        if dim_slice.step == 1:
+            # Do the common/simple version with math.
+            stop = np.min(dim_slice.stop, dim_len)
+            if stop >= dim_slice.start:
+                return dim_slice.stop - dim_slice.start
+            else:
+                return
+        else:
+            # TODO: There is a way to calculate when the step is not 1.
+            logger.warning("TODO: Verify slice calculation with stepping!")
+            new_shape[dim] = range(*dim_slice.indices(dim_len))
+
+    # TODO: Double check this especially with stepping.
+    new_shape = []
+    for dim in range(len(old_shape)):
+        old_len = old_shape[dim]
+        dim_slice = one_slice_per_dim[dim]
+        if is_dask(old_len) or is_dask(dim_slice):
+            new_shape.append(daskify_call(get_new_len, old_len, dim_slice, _dask_output_types=int))
+        else:
+            new_shape.append(get_new_len(old_len, dim_slice))
+    return tuple(new_shape)
+
+
+def daskify_call_return_array(f: callable, *args, _dask_shape, _dask_dtype, _dask_meta, **kwargs):
+    return dask.array.from_delayed(
+        daskify_call(f, *args,
+                     _dask_len=None,
+                     _dask_output_types=(list, np.array, pd.Series),
+                     **kwargs),
+        shape=_dask_shape,
+        dtype=_dask_dtype,
+        meta=_dask_meta
+    )
+
+
+def daskify_call_return_df(f: callable, *args, _dask_len=None, _dask_meta=None, **kwargs):
+    return dask.dataframe.from_delayed(
+        daskify_call(f, *args, _dask_len=None, _dask_output_types=pd.DataFrame, **kwargs),
+        meta=_dask_meta,
+        verify_meta=True
+    )

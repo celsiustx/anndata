@@ -54,8 +54,7 @@ def _normalize_index(
     ],
     index: pd.Index,
 ) -> Union[slice, int, np.ndarray]:  # ndarray of int
-    from anndata._io.dask.utils import daskify_call
-    from anndata_daskified import is_dask
+    from anndata_daskified import is_dask, daskify_call
 
     if not isinstance(index, pd.RangeIndex):
         assert (

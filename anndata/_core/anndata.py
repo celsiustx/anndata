@@ -529,11 +529,11 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         self._uns = uns or OrderedDict()
 
         # TODO: Think about consequences of making obsm a group in hdf
-        self._obsm = AxisArrays(self, 0, vals=convert_to_dict(obsm))
-        self._varm = AxisArrays(self, 1, vals=convert_to_dict(varm))
+        self._obsm = self._create_axis_arrays(0, obsm)
+        self._varm = self._create_axis_arrays(1, varm)
 
-        self._obsp = PairwiseArrays(self, 0, vals=convert_to_dict(obsp))
-        self._varp = PairwiseArrays(self, 1, vals=convert_to_dict(varp))
+        self._obsp = self._create_pairwise_arrays(0, obsp)
+        self._varp = self._create_pairwise_arrays(1, varp)
 
         # Backwards compat for connectivities matrices in uns["neighbors"]
         _move_adj_mtx({"uns": self._uns, "obsp": self._obsp})
@@ -559,6 +559,13 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
         # layers
         self._layers = Layers(self, layers)
+
+    def _create_axis_arrays(self, axis, vals_raw):
+        return AxisArrays(self, axis, vals=convert_to_dict(vals_raw))
+
+    def _create_pairwise_arrays(self, axis, vals_raw):
+        return PairwiseArrays(self, axis, vals=convert_to_dict(vals_raw))
+
 
     def __sizeof__(self) -> int:
         size = 0
