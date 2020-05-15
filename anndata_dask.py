@@ -59,9 +59,7 @@ def is_dask(obj) -> bool:
 
 
 class AnnDataDask(AnnData):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
+    
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
         # NOTE: This method has a large chunk at the beginning and end that is
         # copied from the parent _init_as_view.  Unless we refactor the parent
