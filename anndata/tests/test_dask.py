@@ -85,8 +85,10 @@ def test_dask_load(path):
     @singledispatch
     def check(fn):
         if callable(fn):
-            v_mem = fn(ad1)
-            v_dask = fn(ad2)
+            import dask.base
+            with prevent_method_calls(dask.base.DaskMethodsMixin, "compute"):
+                v_mem = fn(ad1)
+                v_dask = fn(ad2)
             eq(v_mem, v_dask)
         else:
             raise NotImplementedError
@@ -187,7 +189,7 @@ def prevent_method_calls(cls, method_name):
     return ctx
 
 
-@pytest.mark.parametrize('path', [old_path])
+@pytest.mark.parametrize('path', [old_path, new_path])
 def test_load_without_compute(path):
     import dask.base
 
