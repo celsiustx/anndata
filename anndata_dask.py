@@ -289,12 +289,16 @@ class AnnDataDask(AnnData):
     def uns(self) -> MutableMapping:
         """Unstructured annotation (ordered dictionary)."""
         import anndata._core
-        uns_overloaded = daskify_call(anndata._core.anndata._overloaded_uns, self)
         if self.is_view:
-            def uns_to_dictview(uns_, anndata):
-                return DictView(uns_, view_args=(anndata, "uns"))
-            uns_overloaded = daskify_call(uns_to_dictview, uns_overloaded, self)
-        return uns_overloaded
+            def uns_overload_and_dictview(uns1):
+                self_safe_copy = self._raw_copy()
+                setattr(self_safe_copy, "_uns", uns1)
+                uns2 = anndata._core.anndata._overloaded_uns(self)
+                return DictView(uns2, view_args=(self_safe_copy, "uns"))
+            uns = daskify_call(uns_overload_and_dictview, self._uns)
+        else:
+            uns = daskify_call(anndata._core.anndata._overloaded_uns, self)
+        return uns
 
     def _check_dimensions(self, key=None):
         # These checks can't occur until the data is vivified.
