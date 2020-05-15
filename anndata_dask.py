@@ -61,6 +61,9 @@ class AnnDataDask(AnnData):
         super().__init__(*args, **kwargs)
 
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
+        # NOTE: This method has a large chunk at the beginning and end that is
+        # copied from the parent _init_as_view.  Unless we refactor the parent
+        # those will need to be kept in sync.
 
         ### BEGIN COPIED FROM ORIGINAL
         if is_dask(adata_ref) or is_dask(oidx) or is_dask(vidx):

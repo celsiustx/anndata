@@ -5,7 +5,7 @@ import scipy.sparse
 
 import anndata
 from anndata._core.aligned_mapping import AxisArrays
-from anndata_daskified import is_dask
+from anndata_dask import is_dask
 
 DIFF_PARTS = ['X', 'obs', 'var', 'uns', 'obsm', 'varm', 'layers', 'raw',
               'shape', 'obsp', 'varp']

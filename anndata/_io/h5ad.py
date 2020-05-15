@@ -336,7 +336,7 @@ def read_h5ad_backed(filename: Union[str, Path], mode: Literal["r", "r+"], dask:
     _clean_uns(d, dask)
 
     if dask:
-        from anndata_daskified import AnnDataDask
+        from anndata_dask import AnnDataDask
         return AnnDataDask(**d)
     else:
         return AnnData(**d)

@@ -304,10 +304,10 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         vidx: Index1D = None,
     ):
         # Sanity check to ensure everything that should go through AnnDataDask does.
-        from anndata_daskified import is_dask
+        from anndata_dask import is_dask
         if any(is_dask(v) for v in (X, obs, var, uns)):
-            import anndata_daskified
-            if not isinstance(self, anndata_daskified.AnnDataDask):
+            import anndata_dask
+            if not isinstance(self, anndata_dask.AnnDataDask):
                 raise ValueError("Dask attributes should only be used on an AnnDataDask!")
 
         if asview:
@@ -409,7 +409,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         filemode=None,
         fd=None
     ):
-        from anndata_daskified import is_dask
+        from anndata_dask import is_dask
 
         # view attributes
         self._is_view = False
@@ -913,7 +913,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         """Unstructured annotation (ordered dictionary)."""
         uns = _overloaded_uns(self)
         if self.is_view:
-            from anndata_daskified import is_dask
+            from anndata_dask import is_dask
             if is_dask(uns):
                 raise ValueError("Use AnnDataDask for daskified uns or AnnData!")
             else:
@@ -1458,7 +1458,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
     def copy(self, filename: Optional[PathLike] = None) -> "AnnData":
         """Full copy, optionally on disk."""
-        from anndata_daskified import is_dask
+        from anndata_dask import is_dask
         if not self.isbacked:
             if self.is_view:
                 # TODO: How do I unambiguously check if this is a copy?
