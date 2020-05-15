@@ -126,12 +126,9 @@ def test_dask_load(path):
         lambda ad: ad.X[:20,:20],
     ))
 
-    def ss(ad):
-        return ad[:10]
-    check(ss)
-
     # These work when we add deferred() around all .iloc calls and things that use them.
     check((
+        return ad[:10],
         lambda ad: ad[:10],
         lambda ad: ad[:10, :],
         lambda ad: ad[:10, :10],
