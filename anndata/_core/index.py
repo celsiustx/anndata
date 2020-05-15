@@ -54,7 +54,7 @@ def _normalize_index(
     ],
     index: pd.Index,
 ) -> Union[slice, int, np.ndarray]:  # ndarray of int
-    from anndata._io.dask.utils import is_dask, daskify_call
+    from anndata_dask import is_dask, daskify_call
 
     if not isinstance(index, pd.RangeIndex):
         assert (
@@ -145,7 +145,8 @@ def _subset(a: Union[np.ndarray, spmatrix, pd.DataFrame], subset_idx: Index):
 
 @_subset.register(da.Array)
 def _subset_dask_array(a: da.Array, idx: Index):
-    from anndata._io.dask.utils import daskify_call_return_array, daskify_calc_shape, is_dask, daskify_call
+    from anndata._io.dask.utils import daskify_call_return_array, daskify_calc_shape, daskify_call
+    from anndata_dask import is_dask
     new_shape = daskify_calc_shape(a.shape, idx)
     if any(is_dask(v) for v in new_shape):
         return daskify_call(_subset, a, idx)

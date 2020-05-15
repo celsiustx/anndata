@@ -8,6 +8,8 @@ try:
 except ImportError:
     from contextlib import suppress as nullcontext
 
+import dask as dsk
+import dask.dataframe as dd
 from dask.dataframe import from_delayed
 from dask.delayed import delayed
 from h5py import File, Group
@@ -36,10 +38,10 @@ def get_slice(path, name, start, end, columns, index_col=None):
                 else:
                     return v[start:end]
 
-            df = DF({ k: get_series(k) for k in columns })
+            df: dd.DataFrame = DF({ k: get_series(k) for k in columns })
         else:
             dataset = obj
-            df = DF(dataset[start:end])[columns]
+            df: dd.DataFrame = DF(dataset[start:end])[columns]
 
         if index_col is not None:
             if isinstance(index_col, str):

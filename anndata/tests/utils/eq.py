@@ -51,9 +51,14 @@ def _(l, r): assert l == r
 from scipy.sparse import spmatrix
 @eq.register(spmatrix)
 def _(l, r):
-    if isinstance(r, DaskMethodsMixin):
-        r = r.compute()
-    assert((l != r).nnz == 0)
+    if l.shape != r.shape:
+        raise ValueError("Differing shapes: %s => %s" % (l.shape, r.shape))
+    diff = (l != r)
+    if hasattr(diff, "nnz"):
+        assert(diff.nnz == 0)
+    else:
+        raise ValueError("Can't compare %s and %s!" % (l, r))
+
 
 from pandas import DataFrame as DF
 from pandas.testing import assert_frame_equal
@@ -61,6 +66,8 @@ from pandas.testing import assert_frame_equal
 def _(l, r):
     if isinstance(r, DaskMethodsMixin):
         r = r.compute()
+    if l.index.names == [None] and r.index.names == ["_index"]:
+        l.index.names = ["_index"]
     assert_frame_equal(l, r)
 
 
@@ -75,7 +82,7 @@ def _(l, r):
 
 from anndata import AnnData
 @eq.register(AnnData)
-def _(l, r):
+def _(l: AnnData, r: AnnData):
     for k in ['X','obs','var',]:
         lv = getattr(l, k)
         rv = getattr(r, k)
@@ -84,6 +91,9 @@ def _(l, r):
         if isinstance(rv, DaskMethodsMixin):
             rv = rv.compute()
         eq(lv, rv)
+    differences = r.diff_summary(l)
+    assert(differences == {})
+
 
 def cmp(l, r):
     eq(

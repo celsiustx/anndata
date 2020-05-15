@@ -8,6 +8,7 @@ from anndata import read_h5ad
 from .utils.data import make_test_h5ad
 from .utils.eq import cmp as eq
 from .utils.obj import Obj
+from .._core.sparse_dataset import SparseDataset
 
 package_root = Path(anndata.__file__).parent.parent
 new_path = package_root / 'new.h5ad'
@@ -35,8 +36,9 @@ def test_cmp_new_old_h5ad(dask):
     def load_ad(path):
         ad = read_h5ad(path, backed='r', dask=dask)
         X = compute(ad.X)
-        coo = X.tocoo() if dask else X.value.tocoo()
-        rows, cols = coo.nonzero()
+        if isinstance(X, SparseDataset):
+            X = X.value
+        rows, cols = X.nonzero()
         nnz = list(zip(list(rows), list(cols)))
         return Obj(dict(ad=ad, nnz=nnz, obs=compute(ad.obs), var=compute(ad.var)), default=ad)
 
@@ -55,6 +57,12 @@ def test_cmp_new_old_h5ad(dask):
 
     print(old.obs.index)
 
+    if old.obs.index.names == [None] and new.obs.index.names == ["_index"]:
+        old.obs.index.names = ["_index"]
+
+    if old.var.index.names == [None] and new.var.index.names == ["_index"]:
+        old.var.index.names = ["_index"]
+
     assert_frame_equal(old.obs, new.obs)
     assert_frame_equal(old.var, new.var)
     # with TemporaryDirectory() as dir:
@@ -70,7 +78,12 @@ def test_dask_load(path):
     @singledispatch
     def check(fn):
         if callable(fn):
-            eq(fn(ad1), fn(ad2))
+            v_mem = fn(ad1)
+            v_dask = fn(ad2)
+            try:
+                eq(v_mem, v_dask)
+            except Exception as e:
+                eq(v_mem, v_dask)
         else:
             raise NotImplementedError
 
@@ -87,7 +100,9 @@ def test_dask_load(path):
         )
 
     check((
-        'X','obs','var',
+        'X',
+        'obs',
+        'var',
         # TODO: obsm, varm, obsp, varp, uns, layers, raw
     ))
 

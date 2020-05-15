@@ -38,7 +38,6 @@ def sparse_hdf5_group_to_backed_dataset(obj, **kwags):
 @sparse_hdf5_group_to_backed_dataset.register(Group)
 def _(group, **kwargs): return SparseDataset(group, **kwargs).to_backed()
 
-
 def make_chunk(ranges: Collection[Tuple[int,int]], block_info, shape, record_dtype, range_dtype, ndim, path, _name, to_array, to_array_kwargs):
     '''Given a `path` to an HDF5 file, and a list of [start,end) index-pairs (one per dimension), build an `H5Chunk`'''
     block_info = block_info[0]
