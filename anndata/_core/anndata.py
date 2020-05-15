@@ -496,8 +496,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             self._n_obs, self._n_vars = self._X.shape
         else:
             self._X = None
-            self._n_obs = len([] if obs is None else obs)
-            self._n_vars = len([] if var is None else var)
+            self._n_obs = 0 if obs is None else len(obs)
+            self._n_vars = 0 if var is None else len(var)
             # check consistency with shape
             if shape is not None:
                 if self._n_obs == 0:

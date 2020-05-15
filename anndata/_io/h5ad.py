@@ -4,7 +4,7 @@ from functools import _find_impl, partial
 from warnings import warn
 from pathlib import Path
 from types import MappingProxyType
-from typing import Callable, Type, TypeVar, Union
+from typing import Callable, Type, TypeVar, Union, Optional
 from typing import Collection, Sequence, Mapping
 
 import h5py
@@ -495,7 +495,7 @@ def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
         df = load_dask_dataframe(
             group=group,
             index_col=idx_key,
-            columns=columns
+            columns=columns,
         )
     else:
         df = pd.DataFrame(

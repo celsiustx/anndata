@@ -132,7 +132,12 @@ def load_dask_dataframe(
         for start, end in chunk_slices
     ]
 
-    ddf = from_delayed(chunks)
+    # The dask "meta" is a pandas dataframe with zero rows that captures the shape.
+    # By doing a single "slice" of zero rows we read the file a tiny amount,
+    # and this happens synchronously outside of the graph processing.
+    meta = get_slice(path, key, 0, 0, columns=columns, index_col=index_col)
+
+    ddf = from_delayed(chunks, meta=meta)
     ddf._len = n_rows
     ddf.partition_sizes = [ end-start for start, end in chunk_slices ]
     return ddf
