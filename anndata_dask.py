@@ -230,9 +230,6 @@ class AnnDataDask(AnnData):
                 # NOTE: The original code has logic for when the backed X
                 # comes from a Dataset below.  See the TODO below.
             self._X = X
-        else:
-            X = load_dask_array(path=self.file.filename, key='X',
-                                format_str='csr', shape=self.shape)
         return self._X
 
     @X.setter
@@ -245,7 +242,13 @@ class AnnDataDask(AnnData):
         oidx, vidx = self._normalize_indices(index)
         return self.__class__(self, oidx=oidx, vidx=vidx, asview=True)
 
-    def compute(self, *args, _debug:bool=False, **kwargs):
+    def to_dask_delayed(self, *args, _debug:bool=False, **kwargs):
+        if self.is_view:
+            def _compute_anndata_view(adata_ref, oidx, vidx):
+                return AnnData(oidx=oidx, vidx=vidx, asview=True)
+            virtual = daskify_call(_compute_anndata_view, self._adata_ref.to_dask_delayed(), self._oidx, self._vidx)
+            return virtual
+
         def _compute_anndata(X, **raw_attr_value_pairs):
             # Construct an AnnData at a low-level,
             # swapping out each of the attributes specified.
@@ -277,6 +280,10 @@ class AnnDataDask(AnnData):
                         pass
 
         virtual = daskify_call(_compute_anndata, self.X, **attribute_value_pairs)
+        return virtual
+
+    def compute(self, *args, _debug: bool = False, **kwargs):
+        virtual = self.to_dask_delayed(*args, _debug=_debug, **kwargs)
         real = virtual.compute(*args, **kwargs)
         return real
 
