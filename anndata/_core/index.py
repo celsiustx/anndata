@@ -90,7 +90,7 @@ def _normalize_index(
         return index.map(lambda ix: _normalize_index(indexer, ix))
     elif isinstance(indexer, str):
         return index.get_loc(indexer)  # int
-    elif isinstance(indexer, (Sequence, np.ndarray, pd.Index, spmatrix, np.matrix)):
+    elif isinstance(indexer, (pd.Series, Sequence, np.ndarray, pd.Index, spmatrix, np.matrix)):
         if hasattr(indexer, "shape") and (
             (indexer.shape == (index.shape[0], 1))
             or (indexer.shape == (1, index.shape[0]))
