@@ -488,7 +488,10 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             elif isinstance(X, ZarrArray):
                 X = X.astype(dtype)
             elif is_dask(X):
-                raise ValueError("Use the AnnDataDask subclass to use an X that is daskified!")
+                # This should not be part of the base class, but is helpful for now to catch errors.
+                from anndata_dask import AnnDataDask
+                if not isinstance(self, AnnDataDask):
+                    raise ValueError("Use the AnnDataDask subclass to use an X that is daskified!")
             else:  # is np.ndarray or a subclass, convert to true np.ndarray
                 X = np.array(X, dtype, copy=False)
             # data matrix and shape

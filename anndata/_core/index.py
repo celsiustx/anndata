@@ -75,7 +75,12 @@ def _normalize_index(
         else:
             # just the indexer is dask
             return indexer.map(lambda ixr: _normalize_index(ixr, index))
-    elif isinstance(indexer, slice):
+
+    if isinstance(indexer, pd.Series):
+        if indexer.all():
+            indexer = slice(0, len(indexer), 1)
+
+    if isinstance(indexer, slice):
         start = name_idx(indexer.start)
         stop = name_idx(indexer.stop)
         # string slices can only be inclusive, so +1 in that case
@@ -90,7 +95,7 @@ def _normalize_index(
         return index.map(lambda ix: _normalize_index(indexer, ix))
     elif isinstance(indexer, str):
         return index.get_loc(indexer)  # int
-    elif isinstance(indexer, (Sequence, np.ndarray, pd.Index, spmatrix, np.matrix)):
+    elif isinstance(indexer, (pd.Series, Sequence, np.ndarray, pd.Index, spmatrix, np.matrix)):
         if hasattr(indexer, "shape") and (
             (indexer.shape == (index.shape[0], 1))
             or (indexer.shape == (1, index.shape[0]))
