@@ -24,7 +24,7 @@ setup(
     install_requires=[
         l.strip() for l in Path('requirements.txt').read_text('utf-8').splitlines()
         if not (l.startswith("-e") or l.startswith("#"))
-    ] + ["dask[dataframe]", "dask[array]"],
+    ],
     python_requires=">=3.6",
     packages=find_namespace_packages(include=["anndata", "anndata.*", "anndata_dask"]),
     include_package_data=True,
