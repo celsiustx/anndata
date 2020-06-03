@@ -226,6 +226,7 @@ class AnnDataDask(AnnData):
                 X = self._adata_ref.X[self._oidx, self._vidx]
             else:
                 X = load_dask_array(path=self.file.filename, key='X',
+                                    chunk_size=(self._n_obs, "auto"),
                                     format_str='csr', shape=self.shape)
                 # NOTE: The original code has logic for when the backed X
                 # comes from a Dataset below.  See the TODO below.
