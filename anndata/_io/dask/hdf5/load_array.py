@@ -13,6 +13,7 @@ from dask.array.core import normalize_chunks
 from functools import partial, singledispatch
 from h5py import File, Group
 from numpy import array, cumprod, cumsum, empty, result_type, ix_
+import scipy.sparse
 from typing import Collection, Tuple
 
 from anndata._io.h5ad import SparseDataset
@@ -106,6 +107,18 @@ def load_dask_array(
     if isinstance(X, Group):
         X = SparseDataset(X, **to_array_kwargs)
 
+        # Use more precise metadata for sparse results.
+        fmt = to_array_kwargs["format_str"]
+        if fmt == "csr":
+            meta = scipy.sparse.csr_matrix(X.shape, dtype=X.dtype)
+        elif fmt == "csc":
+            meta = scipy.sparse.csc_matrix(X.shape, dtype=X.dtype)
+        else:
+            meta = scipy.sparse.coo_matrix(X.shape, dtype=X.dtype)
+    else:
+        # The default will be an ndarray, which is sufficient for non-sparse results.
+        meta = None
+
     #print(f'Loading HDF5 tensor: {path}:{name}: {X}')
 
     with ctx:
@@ -169,6 +182,5 @@ def load_dask_array(
         )
 
         # Expand each block (which each contain a single `H5Chunk`) into the corresponding array:
-        arr = h5chunks.map_blocks(to_arr, chunks=chunks, dtype=X.dtype, rank=rank)
-
+        arr = h5chunks.map_blocks(to_arr, chunks=chunks, dtype=X.dtype, rank=rank, meta=meta)
         return arr

@@ -70,8 +70,12 @@ def _normalize_index(
 
     if is_dask(indexer):
         if is_dask(index):
-            # both are dask
-            return daskify_call(_normalize_index, indexer, index)
+            if isinstance(indexer, dd.Series):
+                indexer = slice(0, len(indexer), 1)
+            else:
+                raise ValueError("Attempting to normalize dask index swith a dask indexer!  Use a dask series Indexer instead.")
+                # This works technically, but is too opaque to be useful.
+                # return daskify_call(_normalize_index, indexer, index)
         else:
             # just the indexer is dask
             return indexer.map(lambda ixr: _normalize_index(ixr, index))
