@@ -173,8 +173,8 @@ class AnnDataDask(AnnData):
             # because we will have a circularity problem.  Plus it may never.
             def mk_axis_arrays(obs, var, vals_raw):
                 safe_copy = self._raw_copy()
-                self._obs = obs
-                self._var = var
+                safe_copy._obs = obs
+                safe_copy._var = var
                 return AxisArrays(safe_copy, axis, vals=convert_to_dict(vals_raw))
             return daskify_call(mk_axis_arrays, self.obs, self.var, vals_raw)
         elif is_dask(vals_raw):
@@ -369,17 +369,11 @@ class AnnDataDask(AnnData):
             return read_h5ad(filename, backed=mode, dask=True)
 
     def _raw_copy(self):
-        # TODO: This triggers an odd error later in the code when turned-on.
-        # It is unclear if it is really needed where it is used.  If so, debug.
-        # "Series getitem in only supported for other series objects "
-        return self
-        """
         cls = self.__class__
         new = cls.__new__(cls)
         for attr, val in self.__dict__.items():
             setattr(new, attr, val)
         return new
-        """
 
     def copy_with_changes(self: "AnnDataDask", **kwargs):
         kw = dict(
