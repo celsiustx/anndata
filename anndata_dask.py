@@ -246,7 +246,7 @@ class AnnDataDask(AnnData):
     def to_dask_delayed(self, *args, _debug:bool=False, **kwargs):
         if self.is_view:
             def _compute_anndata_view(adata_ref, oidx, vidx):
-                adata_ref.__class__(adata_ref, oidx=oidx, vidx=vidx, asview=True)
+                return adata_ref.__class__(adata_ref, oidx=oidx, vidx=vidx, asview=True)
             virtual = daskify_call(_compute_anndata_view, self._adata_ref.to_dask_delayed(), self._oidx, self._vidx)
             return virtual
 
