@@ -221,7 +221,7 @@ class AnnDataDask(AnnData):
 
     @property
     def X(self):
-        if self._X is None:
+        if getattr(self, "_X", None) is None:
             if self.is_view:
                 X = self._adata_ref.X[self._oidx, self._vidx]
             else:
