@@ -96,7 +96,6 @@ def load_dask_array(
     may execute on some arbitrary worker in a Dask cluster) to load its elements correctly (as opposed to naive
     approaches where an open `h5py.File` is bound into the task closure, which doesn't serialize).
     '''
-    meta = to_array_kwargs.get("meta", None)
     if X:
         ctx = nullcontext()
         path = X.file.filename
@@ -107,15 +106,18 @@ def load_dask_array(
 
     if isinstance(X, Group):
         X = SparseDataset(X, **to_array_kwargs)
-        if meta is None:
-            # Use more precise metadata.
-            fmt = to_array_kwargs["format_str"]
-            if fmt == "csr":
-                meta = scipy.sparse.csr_matrix(X.shape, dtype=X.dtype)
-            elif fmt == "csc":
-                meta = scipy.sparse.csc_matrix(X.shape, dtype=X.dtype)
-            else:
-                meta = scipy.sparse.coo_matrix(X.shape, dtype=X.dtype)
+
+        # Use more precise metadata for sparse results.
+        fmt = to_array_kwargs["format_str"]
+        if fmt == "csr":
+            meta = scipy.sparse.csr_matrix(X.shape, dtype=X.dtype)
+        elif fmt == "csc":
+            meta = scipy.sparse.csc_matrix(X.shape, dtype=X.dtype)
+        else:
+            meta = scipy.sparse.coo_matrix(X.shape, dtype=X.dtype)
+    else:
+        # The default will be an ndarray, which is sufficient for non-sparse results.
+        meta = None
 
     #print(f'Loading HDF5 tensor: {path}:{name}: {X}')
 
