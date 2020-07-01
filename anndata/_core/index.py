@@ -71,14 +71,22 @@ def _normalize_index(
     if is_dask(indexer):
         if is_dask(index):
             if isinstance(indexer, dd.Series):
-                indexer = slice(0, len(indexer), 1)
+                indexer = indexer.values
+            elif isinstance(indexer, da.Array):
+                pass
             else:
-                raise ValueError("Attempting to normalize dask index swith a dask indexer!  Use a dask series Indexer instead.")
-                # This works technically, but is too opaque to be useful.
-                # return daskify_call(_normalize_index, indexer, index)
+                raise ValueError("Attempting to normalize dask index with an indexer that is not a series or array: %s"
+                                 % indexer)
+            def get_indexer(*a, **kw):
+                (ix, ixr) = a
+                return ix.get_indexer(ixr)
+            pos = index.map_partitions(
+                get_indexer,
+                indexer,
+                meta=index._meta)
+            return pos
         else:
-            # just the indexer is dask
-            return indexer.map(lambda ixr: _normalize_index(ixr, index))
+            return indexer.map_blocks(lambda ixr: _normalize_index(ixr, index))
 
     if isinstance(indexer, pd.Series):
         if indexer.all():
