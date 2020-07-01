@@ -244,6 +244,10 @@ class AnnDataDask(AnnData):
         """Returns a sliced view of the object."""
         #oidx, vidx = self._normalize_indices(index)
         oidx, vidx = unpack_index(index)
+        if isinstance(oidx, dask.dataframe.Series):
+            oidx = oidx.values
+        if isinstance(vidx, dask.dataframe.Series):
+            vidx = vidx.values
         return self.__class__(self, oidx=oidx, vidx=vidx, asview=True)
 
     def to_dask_delayed(self, *args, _debug:bool=False, **kwargs):
