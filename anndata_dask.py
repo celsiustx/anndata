@@ -66,8 +66,8 @@ class AnnDataDask(AnnData):
         # those will need to be kept in sync.
 
         ### BEGIN COPIED FROM ORIGINAL
-        if is_dask(adata_ref) or is_dask(oidx) or is_dask(vidx):
-            use_dask = True
+
+
 
         if adata_ref.isbacked and adata_ref.is_view:
             raise ValueError(
@@ -146,9 +146,11 @@ class AnnDataDask(AnnData):
         def mk_dict_view(dat, ann, key):
             return DictView(dat, view_args=(ann, key))
 
-        self._obs = daskify_call(mk_dataframe_view, obs_sub, self, "obs")
-        self._var = daskify_call(mk_dataframe_view, var_sub, self, "var")
-        self._uns = daskify_call(mk_dataframe_view, uns_new, self, "uns")
+        self._obs = daskify_call_return_df(mk_dataframe_view, obs_sub, self, "obs",
+                                           _dask_meta=obs_sub._meta)
+        self._var = daskify_call_return_df(mk_dataframe_view, var_sub, self, "var",
+                                           _dask_meta=var_sub._meta)
+        self._uns = daskify_call(mk_dataframe_view, uns_new, self, "uns", view_args=(self, "uns"))
 
         ### BEGIN COPIED FROM ORIGINAL
         # set data
@@ -492,9 +494,9 @@ def daskify_call_return_array(f: callable, *args, _dask_shape, _dask_dtype, _das
     )
 
 
-def daskify_call_return_df(f: callable, *args, _dask_len=None, _dask_meta=None, **kwargs):
+def daskify_call_return_df(f: callable, *args, _dask_len=None, _dask_meta=None, _dask_output_types=pd.DataFrame, **kwargs):
     return dask.dataframe.from_delayed(
-        daskify_call(f, *args, _dask_len=None, _dask_output_types=pd.DataFrame, **kwargs),
+        daskify_call(f, *args, _dask_len=_dask_len, _dask_output_types=_dask_output_types, **kwargs),
         meta=_dask_meta,
         verify_meta=True
     )
