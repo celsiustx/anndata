@@ -34,7 +34,7 @@ from dask.array.backends import register_scipy_sparse
 from anndata._core.anndata import _gen_dataframe
 from anndata._core.anndata import AnnData, ImplicitModificationWarning
 from anndata._io.dask.hdf5.load_array import load_dask_array
-from anndata._core.index import _subset, Index
+from anndata._core.index import _subset, Index, unpack_index
 from anndata._core.aligned_mapping import (
     AxisArrays,
     PairwiseArrays,
@@ -242,7 +242,8 @@ class AnnDataDask(AnnData):
 
     def __getitem__(self, index: Index) -> "AnnData":
         """Returns a sliced view of the object."""
-        oidx, vidx = self._normalize_indices(index)
+        #oidx, vidx = self._normalize_indices(index)
+        oidx, vidx = unpack_index(index)
         return self.__class__(self, oidx=oidx, vidx=vidx, asview=True)
 
     def to_dask_delayed(self, *args, _debug:bool=False, **kwargs):
