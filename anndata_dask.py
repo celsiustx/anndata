@@ -126,6 +126,14 @@ class AnnDataDask(AnnData):
         self._obsp = daskify_method_call(adata_ref.obsp, "_view", self, oidx)
         self._varp = daskify_method_call(adata_ref.varp, "_view", self, vidx)
 
+        # Bunt on uns for now, and get test cases.
+        self._uns = adata_ref._uns.copy()
+        """
+        if is_dask(adata_ref._uns):
+            uns_meta = adata_ref._uns._meta
+        else:
+            uns_meta = OrderedDict()
+
         # Special case for old neighbors, backwards compat. Remove in anndata 0.8.
         uns_new1 = daskify_call(_slice_uns_sparse_matrices, adata_ref._uns,
                                 self._oidx, adata_ref.n_obs)
@@ -135,6 +143,7 @@ class AnnDataDask(AnnData):
         uns_new = daskify_method_call(self, "_remove_unused_categories",
                                       adata_ref.var, var_sub, uns_new2,
                                       inplace=False)
+        """
 
         self._n_obs = n_obs
         self._n_vars = n_vars
