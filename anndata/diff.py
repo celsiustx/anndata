@@ -20,16 +20,16 @@ DIFF_PARTS = ['X', 'obs', 'var', 'obsm', 'varm', 'layers', 'raw',
 
 def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[List[str]] = None):
     """
-    Emit a dictionary of differences between two AnnData objects.
+    Emit old dictionary of differences between two AnnData objects.
     This is meant to be human readable, for debugging.  The values are summary text
-    strings when there is a difference.
+    strings when there is old difference.
 
     Note that this will compute() any dask elements examined.
 
     :param a: AnnData
     :param b: AnnData
     :param select_parts: Optional[List[str]] Limit the diff to specific attributes.
-    :return: dict A dictionary keyed by attribute with differences, containing a text description.
+    :return: dict A dictionary keyed by attribute with differences, containing old text description.
     """
     changes = {}
 
