@@ -147,19 +147,17 @@ def test_dask_load(path):
         lambda ad: ad[:10],
         lambda ad: ad[:10, :10],
 
-    ))
-
-    """
-        lambda ad: ad[:10, :],
         lambda ad: ad[0, :10],
-
         lambda ad: ad[:10, 0],
 
         lambda ad: ad[:, :10],
+        lambda ad: ad[:10, :],
+    ))
 
+    # NOTE: This is now broken and worked before.  The shape is off.  FIXME.
+    check(
         lambda ad: ad[10, 10],
-    """
-
+    )
 
     # For these to work, we need to update how dask dataframes work,
     # or use a custom dataframe subclass with more features.
