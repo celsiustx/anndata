@@ -92,7 +92,8 @@ def _(l: AnnData, r: AnnData):
             rv = rv.compute()
         eq(lv, rv)
     differences = r.diff_summary(l)
-    assert(differences == {})
+    if differences != {}:
+        raise Exception(f"Differences found!: {differences}")
 
 
 def cmp(l, r):
