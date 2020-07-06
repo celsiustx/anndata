@@ -34,7 +34,7 @@ from dask.array.backends import register_scipy_sparse
 from anndata._core.anndata import _gen_dataframe
 from anndata._core.anndata import AnnData, ImplicitModificationWarning
 from anndata._io.dask.hdf5.load_array import load_dask_array
-from anndata._core.index import _subset, Index
+from anndata._core.index import _subset, Index, unpack_index
 from anndata._core.aligned_mapping import (
     AxisArrays,
     PairwiseArrays,
@@ -66,8 +66,8 @@ class AnnDataDask(AnnData):
         # those will need to be kept in sync.
 
         ### BEGIN COPIED FROM ORIGINAL
-        if is_dask(adata_ref) or is_dask(oidx) or is_dask(vidx):
-            use_dask = True
+
+
 
         if adata_ref.isbacked and adata_ref.is_view:
             raise ValueError(
@@ -97,7 +97,7 @@ class AnnDataDask(AnnData):
             obs_sub = adata_ref.obs
         else:
             if is_dask(oidx) or is_dask(adata_ref.n_obs):
-                n_obs = daskify_get_len_given_slice(oidx, adata_ref.n_obs)
+                n_obs = daskify_get_len_given_index(oidx, adata_ref.n_obs)
             else:
                 n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
             if is_dask(adata_ref.obs) or is_dask(oidx):
@@ -111,7 +111,7 @@ class AnnDataDask(AnnData):
             n_vars = adata_ref.n_vars
         else:
             if is_dask(vidx) or is_dask(adata_ref.n_vars):
-                n_vars = daskify_get_len_given_slice(vidx, adata_ref.n_vars)
+                n_vars = daskify_get_len_given_index(vidx, adata_ref.n_vars)
             else:
                 n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
             if is_dask(adata_ref.var) or is_dask(vidx):
@@ -403,12 +403,6 @@ def _(anno, length, index_names):
     return anno
 
 
-def daskify_get_len_given_slice(slc: slice, orig_len: int):
-    def get_size(slc_, orig_len_):
-        len(range(*slc_.indices(orig_len_)))
-    return daskify_call(slc, orig_len)
-
-
 def daskify_iloc(df, idx):
     def call_iloc(df_, idx_):
         return df_.iloc[idx_]
@@ -418,6 +412,19 @@ def daskify_iloc(df, idx):
     df = daskify_call_return_df(call_iloc, df, idx, _dask_meta=meta)
     return df
 
+
+
+def daskify_get_len_given_index(index: slice, orig_len: int):
+    if hasattr(index, "_len"):
+        return getattr(index, "_len")
+
+    def get_size(index_, orig_len_):
+        if isinstance(index_, slice):
+            len(range(*index_.indices(orig_len_)))
+        elif isinstance(index_, pd.Series):
+            return index_.size
+
+    return daskify_call(get_size, index, orig_len)
 
 def daskify_call(f, *args, _dask_len=None, _dask_output_types=None, **kwargs):
     # Call a function with delayed() and do some checking around it.
