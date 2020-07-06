@@ -305,21 +305,29 @@ class AnnDataDask(AnnData):
 
     # NOTE: We override the property accessor but not set/delete.
     # The .uns is immutable on AnnDataDask.  Use .copy_with_changes(...)
-    # to make an alterenate AnnDataDask with an update.
+    # to make an alternate AnnDataDask with an updated uns.
     @property
     def uns(self) -> MutableMapping:
         """Unstructured annotation (ordered dictionary)."""
+        return super().uns
+
+        """
         import anndata._core
         if self.is_view:
             def uns_overload_and_dictview(uns1):
                 self_safe_copy = self._raw_copy()
                 setattr(self_safe_copy, "_uns", uns1)
-                uns2 = anndata._core.anndata._overloaded_uns(self)
-                return DictView(uns2, view_args=(self_safe_copy, "uns"))
+                try:
+                    uns2 = anndata._core.anndata._overloaded_uns(self)
+                    return DictView(uns2, view_args=(self_safe_copy, "uns"))
+                except Exception as e:
+                    logger.error("Error calculating uns on a view!", exc_info=e)
+                    raise e
             uns = daskify_call(uns_overload_and_dictview, self._uns)
         else:
             uns = daskify_call(anndata._core.anndata._overloaded_uns, self)
         return uns
+        """
 
     def _check_dimensions(self, key=None):
         # These checks can't occur until the data is vivified.
