@@ -234,7 +234,11 @@ class AnnDataDask(AnnData):
     def X(self):
         if getattr(self, "_X", None) is None:
             if self.is_view:
-                X = self._adata_ref.X[self._oidx, self._vidx]
+                refX: dask.array.Array = self._adata_ref.X
+                def getitem(x, oidx, vidx):
+                    return x[oidx, vidx]
+                viewX = refX.map_blocks(getitem, self._oidx, self._vidx, meta=refX._meta)
+                return viewX
             else:
                 X = load_dask_array(path=self.file.filename, key='X',
                                     chunk_size=(self._n_obs, "auto"),
