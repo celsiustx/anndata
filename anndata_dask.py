@@ -514,9 +514,9 @@ def daskify_call_return_array(f: callable, *args, _dask_shape, _dask_dtype, _das
     )
 
 
-def daskify_call_return_df(f: callable, *args, _dask_len=None, _dask_meta=None, **kwargs):
+def daskify_call_return_df(f: callable, *args, _dask_len=None, _dask_meta=None, _dask_output_types=pd.DataFrame, **kwargs):
     return dask.dataframe.from_delayed(
-        daskify_call(f, *args, _dask_len=None, _dask_output_types=pd.DataFrame, **kwargs),
+        daskify_call(f, *args, _dask_len=_dask_len, _dask_output_types=_dask_output_types, **kwargs),
         meta=_dask_meta,
         verify_meta=True
     )
