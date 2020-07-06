@@ -54,7 +54,7 @@ def _normalize_index(
         np.ndarray,
         pd.Index,
     ],
-    index: pd.Index,
+    index: pd.Index
 ) -> Union[slice, int, np.ndarray]:  # ndarray of int
     from anndata_dask import is_dask, daskify_call
 
@@ -70,18 +70,6 @@ def _normalize_index(
             i = index.get_loc(i)
         return i
 
-    if is_dask(indexer):
-        if is_dask(index):
-            if isinstance(indexer, dd.Series):
-                indexer = slice(0, len(indexer), 1)
-            else:
-                raise ValueError("Attempting to normalize dask index swith a dask indexer!  Use a dask series Indexer instead.")
-                # This works technically, but is too opaque to be useful.
-                # return daskify_call(_normalize_index, indexer, index)
-        else:
-            # just the indexer is dask
-            return indexer.map(lambda ixr: _normalize_index(ixr, index))
-
     if isinstance(indexer, pd.Series):
         if indexer.all():
             indexer = slice(0, len(indexer), 1)
@@ -94,11 +82,27 @@ def _normalize_index(
             stop = None if stop is None else stop + 1
         step = indexer.step
         return slice(start, stop, step)
-    elif isinstance(indexer, (np.integer, int)):
+
+    index_is_dask = is_dask(index)
+    indexer_is_dask = is_dask(indexer)
+
+    if indexer_is_dask or index_is_dask:
+        def _normalize_index_flipargs(index, indexer):
+            return _normalize_index(indexer, index)
+
+        if index_is_dask:
+            # Works if the indexer is normal or dask.
+            result = index.map_partitions(_normalize_index_flipargs, indexer, meta=index._meta)
+        elif indexer_is_dask:
+            from anndata_dask import daskify_call_return_array
+            result = daskify_call_return_array(_normalize_index, indexer, index, _dask_meta=indexer._meta)
+        else:
+            raise Exception("Expected the indexer and/or index to be Dask.")
+
+        return result
+
+    if isinstance(indexer, (np.integer, int)):
         return indexer
-    elif isinstance(index, dask_base.DaskMethodsMixin):
-        # Note: all code that actually touches the index should be after this check.
-        return index.map(lambda ix: _normalize_index(indexer, ix))
     elif isinstance(indexer, str):
         return index.get_loc(indexer)  # int
     elif isinstance(indexer, (pd.Series, Sequence, np.ndarray, pd.Index, spmatrix, np.matrix)):
@@ -123,6 +127,8 @@ def _normalize_index(
             positions = np.where(indexer)[0]
             return positions  # np.ndarray[int]
         else:  # indexer should be string array
+            if not hasattr(index, "get_indexer"):
+                pass
             positions = index.get_indexer(indexer)
             if np.any(positions < 0):
                 not_found = indexer[positions < 0]
