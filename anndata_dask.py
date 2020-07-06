@@ -152,12 +152,14 @@ class AnnDataDask(AnnData):
         def mk_dataframe_view(sub, ann, key):
             return DataFrameView(sub, view_args=(ann, key))
 
-        def mk_dict_view(dat, ann, key):
-            return DictView(dat, view_args=(ann, key))
+        #def mk_dict_view(dat, ann, key):
+        #    return DictView(dat, view_args=(ann, key))
 
-        self._obs = daskify_call(mk_dataframe_view, obs_sub, self, "obs")
-        self._var = daskify_call(mk_dataframe_view, var_sub, self, "var")
-        self._uns = daskify_call(mk_dataframe_view, uns_new, self, "uns")
+        self._obs = daskify_call_return_df(mk_dataframe_view, obs_sub, self, "obs",
+                                           _dask_meta=obs_sub._meta)
+        self._var = daskify_call_return_df(mk_dataframe_view, var_sub, self, "var",
+                                           _dask_meta=var_sub._meta)
+        #self._uns = daskify_call(mk_dict_view, uns_new, self, "uns")
 
         ### BEGIN COPIED FROM ORIGINAL
         # set data
