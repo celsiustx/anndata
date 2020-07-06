@@ -1,6 +1,5 @@
 import collections.abc as cabc
 from dask import base as dask_base
-from dask import delayed
 import dask.dataframe as dd
 import dask.array as da
 from functools import singledispatch
@@ -11,6 +10,7 @@ from typing import Union, Sequence, Optional, Tuple
 import numpy as np
 import pandas as pd
 from scipy.sparse import spmatrix, issparse
+
 
 logger = getLogger(__file__)
 
@@ -25,21 +25,23 @@ def _normalize_indices(
     if isinstance(index, tuple) and len(index) == 1:
         index = index[0]
     # deal with pd.Series
-    if isinstance(index, pd.Series):
+    if isinstance(index, (pd.Series, dd.Series)):
         index: Index = index.values
     if isinstance(index, tuple):
         if len(index) > 2:
             raise ValueError("AnnData can only be sliced in rows and columns.")
         # deal with pd.Series
         # TODO: The series should probably be aligned first
-        if isinstance(index[1], pd.Series):
+        # It seems this logic could be inside _normalize_index? -ssmith
+        if isinstance(index[1], (pd.Series, dd.Series)):
             index = index[0], index[1].values
-        if isinstance(index[0], pd.Series):
+        if isinstance(index[0], (pd.Series, dd.Series)):
             index = index[0].values, index[1]
+    # NOTE: This might be called unpack_indexer, since the axN is the indexer, and namesN is the index.
     ax0, ax1 = unpack_index(index)
-    ax0 = _normalize_index(ax0, names0)
-    ax1 = _normalize_index(ax1, names1)
-    return ax0, ax1
+    ax0n = _normalize_index(ax0, names0)
+    ax1n = _normalize_index(ax1, names1)
+    return ax0n, ax1n
 
 
 def _normalize_index(
