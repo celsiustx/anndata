@@ -83,6 +83,18 @@ def test_cmp_new_old_h5ad(dask):
     #     ad.write_h5ad(path)
 
 
+def filter_on_self_sum(ad):
+    ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
+    adv = ad[ad.obs["umi_counts"] > 100.0]
+    return adv
+
+def group_sample(adata_list):
+    if isinstance(adata_list[0], AnnDataDask):
+        return anndata_dask.group_samples(adata_list)
+
+
+
+
 @pytest.mark.parametrize('path', [old_path, new_path])
 def test_dask_load(path):
     ad1 = read_h5ad(path, dask=False)
@@ -92,19 +104,12 @@ def test_dask_load(path):
     def check(fn):
         import dask.base
         if callable(fn):
-            try:
-                with prevent_method_calls(dask.base.DaskMethodsMixin, "compute"):
-                    v_mem = fn(ad1)
-                    v_dask = fn(ad2)
-                eq(v_mem, v_dask)
-            except Exception as e:
-                raise e
-                with prevent_method_calls(dask.base.DaskMethodsMixin, "compute"):
-                    v_mem = fn(ad1)
-                    v_dask = fn(ad2)
-                eq(v_mem, v_dask)
+            with prevent_method_calls(dask.base.DaskMethodsMixin, "compute"):
+                v_mem = fn(ad1)
+                v_dask = fn(ad2)
+            eq(v_mem, v_dask)
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"Not callable!: {fn}")
 
     @check.register(tuple)
     def _(args):
@@ -157,18 +162,21 @@ def test_dask_load(path):
         lambda ad: ad[10, 10],
     ))
 
+    TODO1 = (
+        filter_on_self_sum,
+    )
+    check(TODO1)
+
     # For these to work, we need to update how dask dataframes work,
     # or use a custom dataframe subclass with more features.
     # Either case will possibly use normalization like the AnnDataDask.__get_item__(),
     # since that method does successfully create indexes that will slice an obs or var.
-    TODO = [
+    TODO2 = [
         # iloc'ing row(s)/col(s) mostly does not work out, of the box:
         lambda ad: ad.obs.loc['2', 'Prime'],
 
-        # .loc'ing ranges works
-
+        # .loc'ing ranges
         lambda ad: ad.obs.loc[:, :],
-
         lambda ad: ad.obs.loc[:, ['Prime', 'label']],
         lambda ad: ad.obs.loc[:, 'label'],
 

@@ -20,16 +20,16 @@ DIFF_PARTS = ['X', 'obs', 'var', 'obsm', 'varm', 'layers', 'raw',
 
 def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[List[str]] = None):
     """
-    Emit old dictionary of differences between two AnnData objects.
+    Emit a dictionary of differences between two AnnData objects.
     This is meant to be human readable, for debugging.  The values are summary text
-    strings when there is old difference.
+    strings when there is a difference.
 
     Note that this will compute() any dask elements examined.
 
     :param a: AnnData
     :param b: AnnData
     :param select_parts: Optional[List[str]] Limit the diff to specific attributes.
-    :return: dict A dictionary keyed by attribute with differences, containing old text description.
+    :return: dict A dictionary keyed by attribute with differences, containing a text description.
     """
     changes = {}
 
@@ -46,13 +46,16 @@ def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[
             try:
                 aa = aa.compute()
             except Exception as e:
-                changes[part] = "%s does not compute for A %s!: %s" % (part, aa, e)
+                msg = "%s does not compute for A %s!: %s" % (part, aa,  e)
+                logger.error(msg, exc_info=e)
+                changes[part] = msg
                 continue
+
         if is_dask(bb):
             try:
                 bb = bb.compute()
             except Exception as e:
-                msg = "%s does not compute for B %s!: %s" % (part,bb,  e)
+                msg = "%s does not compute for B %s!: %s" % (part, bb,  e)
                 logger.error(msg, exc_info=e)
                 changes[part] = msg
                 continue
@@ -98,11 +101,8 @@ def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[
                 bb = list(map(lambda v: v.compute() if is_dask(v) else v, list(bb)))
 
             # Default in most cases hopefully.
-            try:
-                if aa != bb:
-                    changes[part] = "differ: %s => %s" % (aa, bb)
-            except Exception as e:
-                print("")
+            if aa != bb:
+                changes[part] = "differ: %s => %s" % (aa, bb)
         else:
             aa_str = _simplify_for_diff(aa)
             bb_str = _simplify_for_diff(bb)

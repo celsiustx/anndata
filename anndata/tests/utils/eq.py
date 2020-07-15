@@ -94,7 +94,9 @@ def _(l: AnnData, r: AnnData):
         if isinstance(rv, DaskMethodsMixin):
             rv = rv.compute()
         eq(lv, rv)
-    differences = r.diff_summary(l)
+    rc = r.compute()
+    from anndata.diff import diff_summary
+    differences = diff_summary(l, rc)
     if differences != {}:
         raise Exception(f"Differences found!: {differences}")
 
