@@ -73,9 +73,9 @@ def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[
             if isinstance(delta, bool):
                 if delta:
                     if aa.shape != bb.shape:
-                        changes[part] = "sparse array difference (boolean) " % delta
+                        changes[part] = f"sparse array difference aa.shape: {aa.shape} => bb.shape: {bb.shape}"
                     else:
-                        changes[part] = "sparse array difference (boolean) " % delta
+                        changes[part] = f"sparse array difference, shapes match! (boolean) "
             else:
                 cnt = delta.nnz
                 if cnt != 0:

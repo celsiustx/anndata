@@ -511,14 +511,15 @@ def daskify_calc_shape(old_shape, one_slice_per_dim):
 
 
 def daskify_call_return_array(f: callable, *args, _dask_shape, _dask_dtype, _dask_meta, **kwargs):
+    if "_dask_output_types" not in kwargs:
+        kwargs["_dask_output_types"] = (list, np.array, pd.Series)
+    if "_dask_len" not in kwargs:
+        kwargs["_dask_len"] = None
     return dask.array.from_delayed(
-        daskify_call(f, *args,
-                     _dask_len=None,
-                     _dask_output_types=(list, np.array, pd.Series),
-                     **kwargs),
+        daskify_call(f, *args, **kwargs),
         shape=_dask_shape,
         dtype=_dask_dtype,
-        meta=_dask_meta
+        meta=_dask_meta,
     )
 
 
