@@ -11,7 +11,7 @@
 # - Other functions and objects may or may not have dask-awareness internally.
 #   ^^ Ideally we remove this too, but it is trickier.
 #
-
+from collections import OrderedDict
 from copy import deepcopy
 import functools
 from os import PathLike
@@ -34,7 +34,7 @@ from dask.array.backends import register_scipy_sparse
 from anndata._core.anndata import _gen_dataframe
 from anndata._core.anndata import AnnData, ImplicitModificationWarning
 from anndata._io.dask.hdf5.load_array import load_dask_array
-from anndata._core.index import _subset, Index
+from anndata._core.index import _subset, Index, unpack_index
 from anndata._core.aligned_mapping import (
     AxisArrays,
     PairwiseArrays,
@@ -66,8 +66,8 @@ class AnnDataDask(AnnData):
         # those will need to be kept in sync.
 
         ### BEGIN COPIED FROM ORIGINAL
-        if is_dask(adata_ref) or is_dask(oidx) or is_dask(vidx):
-            use_dask = True
+
+
 
         if adata_ref.isbacked and adata_ref.is_view:
             raise ValueError(
@@ -97,7 +97,7 @@ class AnnDataDask(AnnData):
             obs_sub = adata_ref.obs
         else:
             if is_dask(oidx) or is_dask(adata_ref.n_obs):
-                n_obs = daskify_get_len_given_slice(oidx, adata_ref.n_obs)
+                n_obs = daskify_get_len_given_index(oidx, adata_ref.n_obs)
             else:
                 n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
             if is_dask(adata_ref.obs) or is_dask(oidx):
@@ -111,7 +111,7 @@ class AnnDataDask(AnnData):
             n_vars = adata_ref.n_vars
         else:
             if is_dask(vidx) or is_dask(adata_ref.n_vars):
-                n_vars = daskify_get_len_given_slice(vidx, adata_ref.n_vars)
+                n_vars = daskify_get_len_given_index(vidx, adata_ref.n_vars)
             else:
                 n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
             if is_dask(adata_ref.var) or is_dask(vidx):
@@ -126,6 +126,14 @@ class AnnDataDask(AnnData):
         self._obsp = daskify_method_call(adata_ref.obsp, "_view", self, oidx)
         self._varp = daskify_method_call(adata_ref.varp, "_view", self, vidx)
 
+        # Bunt on uns for now, and get test cases.
+        self._uns = adata_ref._uns.copy()
+        """
+        if is_dask(adata_ref._uns):
+            uns_meta = adata_ref._uns._meta
+        else:
+            uns_meta = OrderedDict()
+
         # Special case for old neighbors, backwards compat. Remove in anndata 0.8.
         uns_new1 = daskify_call(_slice_uns_sparse_matrices, adata_ref._uns,
                                 self._oidx, adata_ref.n_obs)
@@ -135,6 +143,7 @@ class AnnDataDask(AnnData):
         uns_new = daskify_method_call(self, "_remove_unused_categories",
                                       adata_ref.var, var_sub, uns_new2,
                                       inplace=False)
+        """
 
         self._n_obs = n_obs
         self._n_vars = n_vars
@@ -143,12 +152,14 @@ class AnnDataDask(AnnData):
         def mk_dataframe_view(sub, ann, key):
             return DataFrameView(sub, view_args=(ann, key))
 
-        def mk_dict_view(dat, ann, key):
-            return DictView(dat, view_args=(ann, key))
+        #def mk_dict_view(dat, ann, key):
+        #    return DictView(dat, view_args=(ann, key))
 
-        self._obs = daskify_call(mk_dataframe_view, obs_sub, self, "obs")
-        self._var = daskify_call(mk_dataframe_view, var_sub, self, "var")
-        self._uns = daskify_call(mk_dataframe_view, uns_new, self, "uns")
+        self._obs = daskify_call_return_df(mk_dataframe_view, obs_sub, self, "obs",
+                                           _dask_meta=obs_sub._meta)
+        self._var = daskify_call_return_df(mk_dataframe_view, var_sub, self, "var",
+                                           _dask_meta=var_sub._meta)
+        #self._uns = daskify_call(mk_dict_view, uns_new, self, "uns")
 
         ### BEGIN COPIED FROM ORIGINAL
         # set data
@@ -223,7 +234,11 @@ class AnnDataDask(AnnData):
     def X(self):
         if getattr(self, "_X", None) is None:
             if self.is_view:
-                X = self._adata_ref.X[self._oidx, self._vidx]
+                refX: dask.array.Array = self._adata_ref.X
+                def getitem(x, oidx, vidx):
+                    return x[oidx, vidx]
+                viewX = refX.map_blocks(getitem, self._oidx, self._vidx, meta=refX._meta)
+                return viewX
             else:
                 X = load_dask_array(path=self.file.filename, key='X',
                                     chunk_size=(self._n_obs, "auto"),
@@ -290,21 +305,29 @@ class AnnDataDask(AnnData):
 
     # NOTE: We override the property accessor but not set/delete.
     # The .uns is immutable on AnnDataDask.  Use .copy_with_changes(...)
-    # to make an alterenate AnnDataDask with an update.
+    # to make an alternate AnnDataDask with an updated uns.
     @property
     def uns(self) -> MutableMapping:
         """Unstructured annotation (ordered dictionary)."""
+        return super().uns
+
+        """
         import anndata._core
         if self.is_view:
             def uns_overload_and_dictview(uns1):
                 self_safe_copy = self._raw_copy()
                 setattr(self_safe_copy, "_uns", uns1)
-                uns2 = anndata._core.anndata._overloaded_uns(self)
-                return DictView(uns2, view_args=(self_safe_copy, "uns"))
+                try:
+                    uns2 = anndata._core.anndata._overloaded_uns(self)
+                    return DictView(uns2, view_args=(self_safe_copy, "uns"))
+                except Exception as e:
+                    logger.error("Error calculating uns on a view!", exc_info=e)
+                    raise e
             uns = daskify_call(uns_overload_and_dictview, self._uns)
         else:
             uns = daskify_call(anndata._core.anndata._overloaded_uns, self)
         return uns
+        """
 
     def _check_dimensions(self, key=None):
         # These checks can't occur until the data is vivified.
@@ -403,12 +426,6 @@ def _(anno, length, index_names):
     return anno
 
 
-def daskify_get_len_given_slice(slc: slice, orig_len: int):
-    def get_size(slc_, orig_len_):
-        len(range(*slc_.indices(orig_len_)))
-    return daskify_call(slc, orig_len)
-
-
 def daskify_iloc(df, idx):
     def call_iloc(df_, idx_):
         return df_.iloc[idx_]
@@ -418,6 +435,19 @@ def daskify_iloc(df, idx):
     df = daskify_call_return_df(call_iloc, df, idx, _dask_meta=meta)
     return df
 
+
+
+def daskify_get_len_given_index(index: slice, orig_len: int):
+    if hasattr(index, "_len"):
+        return getattr(index, "_len")
+
+    def get_size(index_, orig_len_):
+        if isinstance(index_, slice):
+            len(range(*index_.indices(orig_len_)))
+        elif isinstance(index_, pd.Series):
+            return index_.size
+
+    return daskify_call(get_size, index, orig_len)
 
 def daskify_call(f, *args, _dask_len=None, _dask_output_types=None, **kwargs):
     # Call a function with delayed() and do some checking around it.
@@ -481,20 +511,21 @@ def daskify_calc_shape(old_shape, one_slice_per_dim):
 
 
 def daskify_call_return_array(f: callable, *args, _dask_shape, _dask_dtype, _dask_meta, **kwargs):
+    if "_dask_output_types" not in kwargs:
+        kwargs["_dask_output_types"] = (list, np.array, pd.Series)
+    if "_dask_len" not in kwargs:
+        kwargs["_dask_len"] = None
     return dask.array.from_delayed(
-        daskify_call(f, *args,
-                     _dask_len=None,
-                     _dask_output_types=(list, np.array, pd.Series),
-                     **kwargs),
+        daskify_call(f, *args, **kwargs),
         shape=_dask_shape,
         dtype=_dask_dtype,
-        meta=_dask_meta
+        meta=_dask_meta,
     )
 
 
-def daskify_call_return_df(f: callable, *args, _dask_len=None, _dask_meta=None, **kwargs):
+def daskify_call_return_df(f: callable, *args, _dask_len=None, _dask_meta=None, _dask_output_types=pd.DataFrame, **kwargs):
     return dask.dataframe.from_delayed(
-        daskify_call(f, *args, _dask_len=None, _dask_output_types=pd.DataFrame, **kwargs),
+        daskify_call(f, *args, _dask_len=_dask_len, _dask_output_types=_dask_output_types, **kwargs),
         meta=_dask_meta,
         verify_meta=True
     )

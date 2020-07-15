@@ -1,6 +1,7 @@
 import functools
 from dataclasses import dataclass
 from functools import singledispatch
+import inspect
 from pathlib import Path
 from typing import Union
 
@@ -12,6 +13,9 @@ from .utils.data import make_test_h5ad
 from .utils.eq import cmp as eq
 from .utils.obj import Obj
 from .._core.sparse_dataset import SparseDataset
+from anndata._core.index import _normalize_index
+from anndata_dask import is_dask
+import pandas as pd
 
 package_root = Path(anndata.__file__).parent.parent
 new_path = package_root / 'new.h5ad'
@@ -19,6 +23,8 @@ old_path = package_root / 'old.h5ad'  # written by running `make_test_h5ad` in A
 assert (new_path.exists())
 assert (old_path.exists())
 
+import logging
+logger = logging.getLogger(__file__)
 
 @pytest.mark.parametrize('dask', [True, False])
 def test_cmp_new_old_h5ad(dask):
@@ -77,6 +83,12 @@ def test_cmp_new_old_h5ad(dask):
     #     ad.write_h5ad(path)
 
 
+def filter_on_self_sum(ad):
+    ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
+    adv = ad[ad.obs["umi_counts"] > 100.0]
+    return adv
+
+
 @pytest.mark.parametrize('path', [old_path, new_path])
 def test_dask_load(path):
     ad1 = read_h5ad(path, dask=False)
@@ -84,14 +96,14 @@ def test_dask_load(path):
 
     @singledispatch
     def check(fn):
+        import dask.base
         if callable(fn):
-            import dask.base
             with prevent_method_calls(dask.base.DaskMethodsMixin, "compute"):
                 v_mem = fn(ad1)
                 v_dask = fn(ad2)
             eq(v_mem, v_dask)
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"Not callable!: {fn}")
 
     @check.register(tuple)
     def _(args):
@@ -129,24 +141,32 @@ def test_dask_load(path):
         lambda ad: ad.X[:20, :20],
     ))
 
-    # These work when we add deferred() around all .iloc calls and things that use them.
+    # These possibly work with AnnDataDask modifications.
+    # They go through AnnDataDask.__get_item__(ix)
     check((
         lambda ad: ad[:10],
-        lambda ad: ad[:10, :],
         lambda ad: ad[:10, :10],
+
+        lambda ad: ad[0, :10],
         lambda ad: ad[:10, 0],
 
         lambda ad: ad[:, :10],
-        lambda ad: ad[:10, :10],
-        lambda ad: ad[0, :10],
+        lambda ad: ad[:10, :],
 
-        lambda ad: ad[10, 10]
+        lambda ad: ad[10, 10],
     ))
 
-    # These are known or believed to not work in Dask today
-    TODO = [
+    # Higher level ops are defined as functions above.
+    check(
+        filter_on_self_sum,
+    )
+    
+    # For these to work, we need to update how dask dataframes work,
+    # or use a custom dataframe subclass with more features.
+    # Either case will possibly use normalization like the AnnDataDask.__get_item__(),
+    # since that method does successfully create indexes that will slice an obs or var.
+    TODO2 = [
         # iloc'ing row(s)/col(s) mostly does not work out, of the box:
-
         lambda ad: ad.obs.loc['2', 'Prime'],
 
         # .loc'ing ranges
@@ -200,3 +220,25 @@ def test_load_without_compute(path):
         # This should.
         with pytest.raises(PreventedMethodCallException):
             ad.obs.compute()
+
+
+def verify_result_index_indexer(result, index, indexer):
+    index_computed = index.compute() if is_dask(index) else index
+    indexer_computed = indexer.compute() if is_dask(indexer) else indexer
+    result_computed_expected = _normalize_index(indexer_computed, index_computed)
+    result_computed = result.compute()
+    mismatch = (result_computed != result_computed_expected)
+    if hasattr(mismatch, "nnz"):
+        assert (mismatch.nnz == 0)
+    elif hasattr(mismatch, "value_counts"):
+        vc = mismatch.value_counts()
+        cnt = vc.get(True, 0)
+        assert (cnt == 0)
+    elif isinstance(mismatch, bool):
+        assert (mismatch == False)
+    else:
+        try:
+            count_true = pd.Series(mismatch).value_counts().get(True, 0)
+            assert (count_true == 0)
+        except Exception as e:
+            assert (mismatch)

@@ -1,16 +1,21 @@
-from typing import List, Optional, Union
+import logging
 import numpy as np
 import pandas as pd
 import scipy.sparse
 from scipy.sparse import issparse
+from typing import List, Optional, Union
 
 import anndata
 from anndata._core.aligned_mapping import AxisArrays, AxisArraysView, LayersView, \
     PairwiseArraysView
 from anndata_dask import is_dask
 
-DIFF_PARTS = ['X', 'obs', 'var', 'uns', 'obsm', 'varm', 'layers', 'raw',
-              'shape', 'obsp', 'varp']
+
+logger = logging.getLogger(__file__)
+
+
+DIFF_PARTS = ['X', 'obs', 'var', 'obsm', 'varm', 'layers', 'raw',
+              'shape', 'obsp', 'varp', 'uns']
 
 
 def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[List[str]] = None):
@@ -41,13 +46,18 @@ def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[
             try:
                 aa = aa.compute()
             except Exception as e:
-                changes[part] = "%s does not compute for A %s!: %s" % (part, aa, e)
+                msg = "%s does not compute for A %s!: %s" % (part, aa,  e)
+                logger.error(msg, exc_info=e)
+                changes[part] = msg
                 continue
+
         if is_dask(bb):
             try:
                 bb = bb.compute()
             except Exception as e:
-                changes[part] = "%s does not compute for B %s!: %s" % (part,bb,  e)
+                msg = "%s does not compute for B %s!: %s" % (part, bb,  e)
+                logger.error(msg, exc_info=e)
+                changes[part] = msg
                 continue
 
         if aa is None or bb is None:
@@ -58,23 +68,38 @@ def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[
             continue
 
         # The class used for X may be different but still hold identical data.
-        if isinstance(aa, anndata._core.sparse_dataset.SparseDataset):
-            aa = aa.value
-        if isinstance(bb, anndata._core.sparse_dataset.SparseDataset):
-            bb = bb.value
+        aa = normalize_sparse(aa)
+        bb = normalize_sparse(bb)
 
         if issparse(aa) and issparse(bb):
-            cnt = (aa != bb).nnz
-            if cnt != 0:
-                changes[part] = "count of differences between sparse arrays: %s" % cnt
+            delta = (aa != bb)
+            if isinstance(delta, bool):
+                if delta:
+                    if aa.shape != bb.shape:
+                        changes[part] = f"sparse array difference aa.shape: {aa.shape} => bb.shape: {bb.shape}"
+                    else:
+                        changes[part] = f"sparse array difference, shapes match! (boolean) "
+            else:
+                cnt = delta.nnz
+                if cnt != 0:
+                    changes[part] = "count of differences between sparse arrays: %s" % cnt
         elif type(aa) != type(bb):
             changes[part] = "class mismatch: %s => %s" % (aa.__class__, bb.__class__)
         elif isinstance(aa, pd.DataFrame):
             delta = diff_df(aa, bb)
             if delta is not None:
-                changes[part] = str(delta) # Let pandas make a nice string.
+                changes[part] = str(delta) # Let pandas make old nice string.
         elif isinstance(aa, (list, tuple, AxisArrays, AxisArraysView, LayersView,
                              PairwiseArraysView)):
+
+            if isinstance(aa, (list, tuple)):
+                cls = aa.__class__
+                aa = cls(map(lambda v: v.compute() if is_dask(v) else v, list(aa)))
+                bb = cls(map(lambda v: v.compute() if is_dask(v) else v, list(bb)))
+            elif isinstance(aa, list):
+                aa = list(map(lambda v: v.compute() if is_dask(v) else v, list(aa)))
+                bb = list(map(lambda v: v.compute() if is_dask(v) else v, list(bb)))
+
             # Default in most cases hopefully.
             if aa != bb:
                 changes[part] = "differ: %s => %s" % (aa, bb)
@@ -84,6 +109,17 @@ def diff_summary(a: anndata.AnnData, b: anndata.AnnData, select_parts: Optional[
             if aa_str != bb_str:
                 changes[part] = "differ: %s => %s" % (aa_str, bb_str)
     return changes
+
+
+def normalize_sparse(old):
+    new = old
+    if isinstance(old, anndata._core.sparse_dataset.SparseDataset):
+        new = old.value
+    if isinstance(old, (scipy.sparse.coo_matrix, scipy.sparse.csc_matrix)):
+        new = old.tocsr()
+    if isinstance(old, np.matrix):
+        new = scipy.sparse.csr_matrix(old)
+    return new
 
 
 def _simplify_for_diff(value):

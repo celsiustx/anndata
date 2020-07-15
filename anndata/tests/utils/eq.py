@@ -1,5 +1,6 @@
 from dask.base import DaskMethodsMixin
 from functools import singledispatch
+import pandas as pd
 
 
 @singledispatch
@@ -56,6 +57,8 @@ def _(l, r):
     diff = (l != r)
     if hasattr(diff, "nnz"):
         assert(diff.nnz == 0)
+    elif hasattr(l, "A") and hasattr(r, "A"):
+        return False not in pd.Series((l.A != r.A).flatten()).value_counts()
     else:
         raise ValueError("Can't compare %s and %s!" % (l, r))
 
@@ -91,8 +94,11 @@ def _(l: AnnData, r: AnnData):
         if isinstance(rv, DaskMethodsMixin):
             rv = rv.compute()
         eq(lv, rv)
-    differences = r.diff_summary(l)
-    assert(differences == {})
+    rc = r.compute()
+    from anndata.diff import diff_summary
+    differences = diff_summary(l, rc)
+    if differences != {}:
+        raise Exception(f"Differences found!: {differences}")
 
 
 def cmp(l, r):
