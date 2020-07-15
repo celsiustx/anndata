@@ -1,5 +1,6 @@
 from dask.base import DaskMethodsMixin
 from functools import singledispatch
+import pandas as pd
 
 
 @singledispatch
@@ -56,6 +57,8 @@ def _(l, r):
     diff = (l != r)
     if hasattr(diff, "nnz"):
         assert(diff.nnz == 0)
+    elif hasattr(l, "A") and hasattr(r, "A"):
+        return False not in pd.Series((l.A != r.A).flatten()).value_counts()
     else:
         raise ValueError("Can't compare %s and %s!" % (l, r))
 

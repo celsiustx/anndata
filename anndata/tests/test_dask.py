@@ -15,6 +15,7 @@ from .utils.obj import Obj
 from .._core.sparse_dataset import SparseDataset
 from anndata._core.index import _normalize_index
 from anndata_dask import is_dask
+import pandas as pd
 
 package_root = Path(anndata.__file__).parent.parent
 new_path = package_root / 'new.h5ad'
@@ -152,12 +153,9 @@ def test_dask_load(path):
 
         lambda ad: ad[:, :10],
         lambda ad: ad[:10, :],
-    ))
 
-    # NOTE: This is now broken and worked before.  The shape is off.  FIXME.
-    check(
         lambda ad: ad[10, 10],
-    )
+    ))
 
     # For these to work, we need to update how dask dataframes work,
     # or use a custom dataframe subclass with more features.
