@@ -88,12 +88,6 @@ def filter_on_self_sum(ad):
     adv = ad[ad.obs["umi_counts"] > 100.0]
     return adv
 
-def group_sample(adata_list):
-    if isinstance(adata_list[0], AnnDataDask):
-        return anndata_dask.group_samples(adata_list)
-
-
-
 
 @pytest.mark.parametrize('path', [old_path, new_path])
 def test_dask_load(path):
@@ -162,11 +156,11 @@ def test_dask_load(path):
         lambda ad: ad[10, 10],
     ))
 
-    TODO1 = (
+    # Higher level ops are defined as functions above.
+    check(
         filter_on_self_sum,
     )
-    check(TODO1)
-
+    
     # For these to work, we need to update how dask dataframes work,
     # or use a custom dataframe subclass with more features.
     # Either case will possibly use normalization like the AnnDataDask.__get_item__(),
