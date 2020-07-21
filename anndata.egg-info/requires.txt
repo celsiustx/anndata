@@ -1,0 +1,13 @@
+pandas>=0.23.0
+numpy~=1.14
+scipy~=1.0
+h5py
+dataclasses
+natsort
+packaging
+sparse>=0.10.0
+dask[dataframe]
+dask[array]
+
+[:python_version < "3.8"]
+importlib_metadata>=0.7
