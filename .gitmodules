@@ -1,3 +1,0 @@
-[submodule "dask"]
-	path = dask
-	url = git@github.com:celsiustx/dask.git
