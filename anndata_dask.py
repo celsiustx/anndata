@@ -427,6 +427,9 @@ def _(anno, length, index_names):
 
 
 def daskify_iloc(df, idx):
+    # Now works in dask.
+    return df.iloc[idx]
+    """
     def call_iloc(df_, idx_):
         return df_.iloc[idx_]
     meta = df._meta
@@ -434,7 +437,7 @@ def daskify_iloc(df, idx):
         pass
     df = daskify_call_return_df(call_iloc, df, idx, _dask_meta=meta)
     return df
-
+    """
 
 
 def daskify_get_len_given_index(index: slice, orig_len: int):
