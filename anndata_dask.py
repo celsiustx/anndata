@@ -28,6 +28,7 @@ from scipy.sparse import issparse
 
 import dask
 import dask.dataframe
+from dask.dataframe import Series
 import dask.array
 from dask.array.backends import register_scipy_sparse
 
@@ -243,7 +244,23 @@ class AnnDataDask(AnnData):
                 refX: dask.array.Array = self._adata_ref.X
                 def getitem(x, oidx, vidx):
                     return x[oidx, vidx]
-                viewX = refX.map_blocks(getitem, self._oidx, self._vidx, meta=refX._meta)
+
+                if self.obs.partition_sizes is None:
+                    ax0_chunks = [np.nan] * self.obs.npartitions
+                else:
+                    ax0_chunks = self.obs.partition_sizes
+
+                if self.var.partition_sizes is None:
+                    ax1_chunks = [np.nan] * self.var.npartitions
+                else:
+                    ax1_chunks = self.var.partition_sizes
+
+                viewX = refX.map_blocks(
+                    getitem,
+                    self._oidx, self._vidx,
+                    meta=refX._meta,
+                    chunks=(ax0_chunks, ax1_chunks)
+                )
                 return viewX
             else:
                 X = load_dask_array(path=self.file.filename, key='X',
@@ -447,14 +464,24 @@ def daskify_iloc(df, idx):
 
 
 def daskify_get_len_given_index(index: slice, orig_len: int):
-    if hasattr(index, "_len"):
-        return getattr(index, "_len")
+    if isinstance(index, Series):
+        if index.dtype == np.dtype(bool):
+            # Size will depend on actual values in each partition; unknown at build time
+            pass
+        else:
+            # If this is a Series of scalars that each select a row, the number of
+            # output rows will match the size of the Series.
+            if hasattr(index, "_len"):
+                return getattr(index, "_len")
 
     def get_size(index_, orig_len_):
         if isinstance(index_, slice):
             len(range(*index_.indices(orig_len_)))
         elif isinstance(index_, pd.Series):
-            return index_.size
+            if index_.dtype == np.dtype(bool):
+                return index_.sum()
+            else:
+                return index_.size
 
     return daskify_call(get_size, index, orig_len)
 

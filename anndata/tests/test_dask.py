@@ -2,6 +2,7 @@ import functools
 from dataclasses import dataclass
 from functools import singledispatch
 import inspect
+from numpy.testing import assert_array_equal
 from pathlib import Path
 from typing import Union
 
@@ -89,19 +90,34 @@ def filter_on_self_sum(ad):
     return adv
 
 
-@pytest.mark.parametrize('path', [old_path, new_path])
+def test_spmatrix_bool_slice():
+    from scipy.sparse import csc_matrix, spmatrix
+    from scipy import sparse
+
+    csc = sparse.random(10, 10, density=0.1, format='csc')
+    rows = [True]*10
+    l = csc[rows]
+    l = l.A
+    A = csc.A
+    r = A[rows]
+    assert_array_equal(l, r)
+
+@pytest.mark.parametrize('path', [
+    old_path,
+#    new_path
+])
 def test_dask_load(path):
-    ad1 = read_h5ad(path, dask=False)
-    ad2 = read_h5ad(path, backed='r', dask=True)
+    ad1 = read_h5ad(path, backed='r', dask=True)
+    ad2 = read_h5ad(path, dask=False)
 
     @singledispatch
     def check(fn):
         import dask.base
         if callable(fn):
-            with prevent_method_calls(dask.base.DaskMethodsMixin, "compute"):
-                v_mem = fn(ad1)
-                v_dask = fn(ad2)
-            eq(v_mem, v_dask)
+            #with prevent_method_calls(dask.base.DaskMethodsMixin, "compute"):
+            v_dask = fn(ad1)
+            v_mem = fn(ad2)
+            eq(v_dask, v_mem)
         else:
             raise NotImplementedError(f"Not callable!: {fn}")
 
@@ -117,76 +133,100 @@ def test_dask_load(path):
             getattr(ad2, k)
         )
 
-    check((
-        'X',
-        'obs',
-        'var',
-        # TODO: obsm, varm, obsp, varp, uns, layers, raw
-    ))
+    # check((
+    #     'X',
+    #     'obs',
+    #     'var',
+    #     # TODO: obsm, varm, obsp, varp, uns, layers, raw
+    # ))
+    #
+    # # Basic support.
+    # check((
+    #     lambda ad: ad.X * 2,
+    #
+    #     lambda ad: ad.obs.Prime,
+    #     lambda ad: ad.obs['Prime'],
+    #     lambda ad: ad.obs[['Prime', 'idx²']],
+    #
+    #     lambda ad: ad.var.name,
+    #     lambda ad: ad.var['name'],
+    #     lambda ad: ad.var[['sqrt(idx)', 'name']],
+    #
+    #     lambda ad: ad.X[:],
+    #     lambda ad: ad.X[:10],
+    #     lambda ad: ad.X[:20, :20],
+    # ))
+    #
+    # # These possibly work with AnnDataDask modifications.
+    # # They go through AnnDataDask.__get_item__(ix)
+    # check((
+    #     lambda ad: ad[:10],
+    #     lambda ad: ad[:10, :10],
+    #
+    #     lambda ad: ad[0, :10],
+    #     lambda ad: ad[:10, 0],
+    #
+    #     lambda ad: ad[:, :10],
+    #     lambda ad: ad[:10, :],
+    #
+    #     lambda ad: ad[10, 10],
+    # ))
+    #
+    # check(lambda ad: ad.X.sum(axis=1).A.flatten())
 
-    # Basic support.
-    check((
-        lambda ad: ad.X * 2,
+    # def assign_umi_counts(ad):
+    #     ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
+    #     return ad
+    # check(assign_umi_counts)
 
-        lambda ad: ad.obs.Prime,
-        lambda ad: ad.obs['Prime'],
-        lambda ad: ad.obs[['Prime', 'idx²']],
+    # def filter_on_self_sum(ad):
+    #     ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
+    #     adv = ad[ad.obs["umi_counts"] > 10.0]
+    #     return adv
 
-        lambda ad: ad.var.name,
-        lambda ad: ad.var['name'],
-        lambda ad: ad.var[['sqrt(idx)', 'name']],
+    # def slice_obs_by_umi_counts(ad):
+    #     ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
+    #     return ad.obs[ad.obs["umi_counts"] > 10.0]
+    # check(slice_obs_by_umi_counts)
 
-        lambda ad: ad.X[:],
-        lambda ad: ad.X[:10],
-        lambda ad: ad.X[:20, :20],
-    ))
+    # def slice_X_by_umi_counts(ad):
+    #     ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
+    #     indexer = ad.obs["umi_counts"] > 10.0
+    #     X = ad.X
+    #     sliced = X[indexer]
+    #     return sliced
+    # check(slice_X_by_umi_counts)
 
-    # These possibly work with AnnDataDask modifications.
-    # They go through AnnDataDask.__get_item__(ix)
-    check((
-        lambda ad: ad[:10],
-        lambda ad: ad[:10, :10],
-
-        lambda ad: ad[0, :10],
-        lambda ad: ad[:10, 0],
-
-        lambda ad: ad[:, :10],
-        lambda ad: ad[:10, :],
-
-        lambda ad: ad[10, 10],
-    ))
 
     # Higher level ops are defined as functions above.
-    #check(
-    #    filter_on_self_sum,
-    #)
+    check(
+       filter_on_self_sum,
+    )
 
     # For these to work, we need to update how dask dataframes work,
     # or use a custom dataframe subclass with more features.
     # Either case will possibly use normalization like the AnnDataDask.__get_item__(),
     # since that method does successfully create indexes that will slice an obs or var.
-    TODO2 = (
-        # iloc'ing row(s)/col(s) mostly does not work out, of the box:
-        lambda ad: ad.obs.loc['2', 'Prime'],
+    # iloc'ing row(s)/col(s) mostly does not work out, of the box:
 
-        # .loc'ing ranges
-        lambda ad: ad.obs.loc[:, :],
-        lambda ad: ad.obs.loc[:, ['Prime', 'label']],
-        lambda ad: ad.obs.loc[:, 'label'],
+    # Pandas squeezes a dimension out of these (i.e. Series -> int, or DataFrame ->
+    # Series; Dask should be able to detect at build time that it's going to happen,
+    # and emulate it
+    # check(lambda ad: ad.obs.loc['2', 'Prime'])
+    # check(lambda ad: ad.obs.loc['10', ['Prime', 'label']])
+    # check(lambda ad: ad.obs.loc['10', :])
+    # check(lambda ad: ad.obs.loc['10', 'label'])
 
-        # Integer ranges don't work in .loc because obs.index holds strs; this is true in non-dask mode, but seems broken
-        lambda ad: ad.obs.loc[:10, :],
-        lambda ad: ad.obs.loc[:10, ['Prime', 'label']],
-        lambda ad: ad.obs.loc[:10, 'label'],
+    # .loc'ing ranges
+    check(lambda ad: ad.obs.loc[:, :])
+    check(lambda ad: ad.obs.loc[:, ['Prime', 'label']])
+    check(lambda ad: ad.obs.loc[:, 'label'])
 
-        # these work, but Dask returns a DF (to Pandas' Series)
-        lambda ad: ad.obs.loc['10', ['Prime', 'label']],
-        lambda ad: ad.obs.loc['10', :],
+    # Integer ranges don't work in .loc because obs.index holds strs; this is true in non-dask mode, but seems broken
+    # check(lambda ad: ad.obs.loc[:10, :])
+    # check(lambda ad: ad.obs.loc[:10, ['Prime', 'label']])
+    # check(lambda ad: ad.obs.loc[:10, 'label'])
 
-        # works, but Dask returns a Series (to Pandas' scalar)
-        lambda ad: ad.obs.loc['10', 'label'],
-    )
-    check(TODO2)
 
 
 class PreventedMethodCallException(Exception):
