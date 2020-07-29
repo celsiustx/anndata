@@ -66,9 +66,6 @@ class AnnDataDask(AnnData):
         # those will need to be kept in sync.
 
         ### BEGIN COPIED FROM ORIGINAL
-
-
-
         if adata_ref.isbacked and adata_ref.is_view:
             raise ValueError(
                 "Currently, you cannot index repeatedly into a backed AnnData, "
@@ -91,15 +88,20 @@ class AnnDataDask(AnnData):
         ### END COPIED FROM ORIGINAL
 
         # views on attributes of adata_ref
-        if (not is_dask(oidx)) and oidx == slice(None, None, None):
+        if (not is_dask(oidx)) and isinstance(oidx, slice) and oidx == slice(None, None, None):
             # If we didn't slice obs, just return the original.
             n_obs = adata_ref.n_obs
             obs_sub = adata_ref.obs
         else:
             if is_dask(oidx) or is_dask(adata_ref.n_obs):
                 n_obs = daskify_get_len_given_index(oidx, adata_ref.n_obs)
-            else:
+            elif isinstance(oidx, slice):
                 n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
+            elif isinstance(oidx, np.ndarray):
+                n_obs = oidx.size
+            else:
+                raise Exception("not implemented for type {oidx}")
+
             if is_dask(adata_ref.obs) or is_dask(oidx):
                 obs_sub = daskify_iloc(adata_ref.obs, oidx)
             else:
@@ -112,13 +114,17 @@ class AnnDataDask(AnnData):
         else:
             if is_dask(vidx) or is_dask(adata_ref.n_vars):
                 n_vars = daskify_get_len_given_index(vidx, adata_ref.n_vars)
-            else:
+            elif isinstance(vidx, slice):
                 n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
+            elif isinstance(vidx, np.ndarray):
+                n_vars = vidx.size
+            else:
+                raise Exception("not implemented for type {vidx}")
+
             if is_dask(adata_ref.var) or is_dask(vidx):
                 var_sub = daskify_iloc(adata_ref.var, vidx)
             else:
                 var_sub = adata_ref.var.iloc[vidx]
-
 
         self._obsm = daskify_method_call(adata_ref.obsm, "_view", self, (oidx,))
         self._varm = daskify_method_call(adata_ref.obsm, "_view", self, (vidx,))

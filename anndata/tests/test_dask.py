@@ -85,7 +85,7 @@ def test_cmp_new_old_h5ad(dask):
 
 def filter_on_self_sum(ad):
     ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
-    adv = ad[ad.obs["umi_counts"] > 100.0]
+    adv = ad[ad.obs["umi_counts"] > 10.0]
     return adv
 
 
@@ -157,15 +157,15 @@ def test_dask_load(path):
     ))
 
     # Higher level ops are defined as functions above.
-    check(
-        filter_on_self_sum,
-    )
-    
+    #check(
+    #    filter_on_self_sum,
+    #)
+
     # For these to work, we need to update how dask dataframes work,
     # or use a custom dataframe subclass with more features.
     # Either case will possibly use normalization like the AnnDataDask.__get_item__(),
     # since that method does successfully create indexes that will slice an obs or var.
-    TODO2 = [
+    TODO2 = (
         # iloc'ing row(s)/col(s) mostly does not work out, of the box:
         lambda ad: ad.obs.loc['2', 'Prime'],
 
@@ -185,7 +185,8 @@ def test_dask_load(path):
 
         # works, but Dask returns a Series (to Pandas' scalar)
         lambda ad: ad.obs.loc['10', 'label'],
-    ]
+    )
+    check(TODO2)
 
 
 class PreventedMethodCallException(Exception):

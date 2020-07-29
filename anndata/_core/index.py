@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy.sparse import spmatrix, issparse
 
+from dask.dataframe.core import map_partitions
 
 logger = getLogger(__file__)
 
@@ -25,7 +26,7 @@ def _normalize_indices(
     if isinstance(index, tuple) and len(index) == 1:
         index = index[0]
     # deal with pd.Series
-    if isinstance(index, (pd.Series, dd.Series)):
+    if isinstance(index, pd.Series):
         index: Index = index.values
     if isinstance(index, tuple):
         if len(index) > 2:
@@ -33,9 +34,9 @@ def _normalize_indices(
         # deal with pd.Series
         # TODO: The series should probably be aligned first
         # It seems this logic could be inside _normalize_index? -ssmith
-        if isinstance(index[1], (pd.Series, dd.Series)):
+        if isinstance(index[1], pd.Series):
             index = index[0], index[1].values
-        if isinstance(index[0], (pd.Series, dd.Series)):
+        if isinstance(index[0], pd.Series):
             index = index[0].values, index[1]
     # NOTE: This might be called unpack_indexer, since the axN is the indexer, and namesN is the index.
     ax0, ax1 = unpack_index(index)
@@ -83,24 +84,6 @@ def _normalize_index(
         step = indexer.step
         return slice(start, stop, step)
 
-    index_is_dask = is_dask(index)
-    indexer_is_dask = is_dask(indexer)
-
-    if indexer_is_dask or index_is_dask:
-        def _normalize_index_flipargs(index, indexer):
-            return _normalize_index(indexer, index)
-
-        if index_is_dask:
-            # Works if the indexer is normal or dask.
-            result = index.map_partitions(_normalize_index_flipargs, indexer, meta=index._meta)
-        elif indexer_is_dask:
-            from anndata_dask import daskify_call_return_array
-            result = daskify_call_return_array(_normalize_index, indexer, index, _dask_meta=indexer._meta)
-        else:
-            raise Exception("Expected the indexer and/or index to be Dask.")
-
-        return result
-
     if isinstance(indexer, (np.integer, int)):
         return indexer
     elif isinstance(indexer, str):
@@ -137,6 +120,15 @@ def _normalize_index(
                     "are not valid obs/ var names or indices."
                 )
             return positions  # np.ndarray[int]
+    elif is_dask(indexer):
+
+        return indexer
+    elif is_dask(index):
+        # NOTE: The index is the first arg b/c we are mapping, though _normalize_index
+        # expects it to be the 2nd arg.
+        def f(index, indexer):
+            return _normalize_index(indexer, index.values)
+        indexer.map_partitions(f, indexer, meta=index._meta)
     else:
         raise IndexError(f"Unknown indexer {indexer!r} of type {type(indexer)}")
 
