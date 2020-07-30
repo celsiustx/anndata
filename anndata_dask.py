@@ -11,24 +11,26 @@
 # - Other functions and objects may or may not have dask-awareness internally.
 #   ^^ Ideally we remove this too, but it is trickier.
 #
-from collections import OrderedDict
 from copy import deepcopy
 import functools
+from functools import singledispatch
 from os import PathLike
-from typing import Any, Union, Optional  # Meta
-from typing import Iterable, Sequence, Mapping, MutableMapping, Tuple, List  # Generic ABCs
+from typing import Union, Optional  # Meta
+from typing import MutableMapping, Tuple, List  # Generic ABCs
 import warnings
 
 import numpy as np
-from numpy import ma
+from numpy import dtype, nan, ndarray
 import pandas as pd
-from pandas.api.types import is_string_dtype, is_categorical
+from pandas.api.types import is_string_dtype
 from scipy import sparse
-from scipy.sparse import issparse
 
 import dask
+from dask import delayed
 import dask.dataframe
+from dask.dataframe import Series
 import dask.array
+from dask.array import from_delayed, concatenate
 from dask.array.backends import register_scipy_sparse
 
 from anndata._core.anndata import _gen_dataframe
@@ -46,9 +48,6 @@ from anndata._core.views import (
 )
 from anndata.utils import convert_to_dict
 from anndata.logging import anndata_logger as logger
-from anndata.compat import (
-    _slice_uns_sparse_matrices,
-)
 
 
 register_scipy_sparse()
@@ -56,6 +55,188 @@ register_scipy_sparse()
 
 def is_dask(obj) -> bool:
     return isinstance(obj, dask.base.DaskMethodsMixin)
+
+
+def normalize_slice(idxr, size):
+    m = idxr.start or 0
+    M = idxr.stop if idxr.stop is not None else size
+    Δ = idxr.step or 1
+    if m < 0: m += size
+    if M < 0: M += size
+    m, M = min(m, M), max(m, M)
+    m = np.clip(m, 0, size)
+    M = np.clip(M, 0, size)
+    if Δ < 0:
+        Δ = -Δ
+        m += (M-m)%Δ
+
+    return m, M, Δ
+
+
+def bools_to_ints(bools: Union[pd.Series, ndarray]):
+    '''Convert a bool-Series to an int-Series representing the indices where True was found.
+
+    - reset_index twice to get a column of auto-incrementing ints (the initial index may be e.g. strings)
+    - restore the original index
+    - slice using the original booleans (along the original index)
+    - take the first column (the pre-slice auto-incrementing integers)
+    '''
+    assert bools.dtype == dtype(bool)
+    sliced = \
+        bools \
+            .reset_index(drop=True) \
+            .reset_index() \
+            .set_index(bools.index) \
+            [bools]
+    return sliced[sliced.columns[0]]
+
+
+def maybe_bools_to_ints(slicer):
+    if isinstance(slicer, (pd.Series, ndarray)) and slicer.dtype == dtype(bool):
+        return bools_to_ints(slicer)
+    else:
+        return slicer
+
+
+@singledispatch
+def partition_idxr(idxr, partition_sizes):
+    '''Given an indexer and list of partition sizes, return a map from [partition idx]
+    to [indexer containing elements corresponding to that partition].
+
+    The latter can be an in-memory or Dask object; in either case, overlapping
+    partitions can be zipped and the indexer applied to each partition's elements.
+    '''
+    raise NotImplementedError('%s: %s' % (type(idxr), idxr))
+
+@partition_idxr.register(slice)
+@partition_idxr.register(range)
+def _(idxr, partition_sizes):
+    partition_slices = {}
+    if not partition_sizes:
+        return partition_slices
+    partition_ends = np.cumsum(partition_sizes).tolist()
+    size = partition_ends[-1]
+    partition_idx_ranges = zip(
+        [0] + partition_ends,
+        partition_ends,
+    )
+
+    m, M, Δ = normalize_slice(idxr, size)
+
+    for partition_idx, (start, end) in enumerate(partition_idx_ranges):
+        if start < M and end > m:
+            if start >= m:
+                first = (start - m) % Δ
+            else:
+                first = m
+            last = min(end, M) - start
+            partition_slices[partition_idx] = slice(first, last, Δ)
+
+    return partition_slices
+
+@partition_idxr.register(list)
+@partition_idxr.register(tuple)
+def _(idxr, partition_sizes):
+    '''Break a list of integer indices into sets that can be applied within partitions.
+
+    Example:
+    - idxr: [2,3,5,8,13,21,34,55]
+    - partition_sizes: [10,20,30])
+    - return: { 0: [2,3,5,8], 1: [3,11], 2: [4,25] }
+
+    (Note that the 13, 21, 34, and 55 are converted to the relative offsets within
+    partitions 1 and 2 (which start at indices 10 and 30, resp.)
+
+    TODO: factor with similar block in dataframe iloc?
+
+    :param idxr: integer indices
+    :param partition_sizes:
+    :return: map from [ partition index ] to [ relative indices on that partition
+        corresponding to its intersection with `idxr` ]
+    '''
+    idxr = tuple(idxr)
+    partition_idx_lists = {}
+    if not partition_sizes:
+        return partition_idx_lists
+    cur_partition_idxs = []
+    idx_pos = 0
+    num_idxs = len(idxr)
+    partition_ends = np.cumsum(partition_sizes).tolist()
+    size = partition_ends[-1]
+    npartitions = len(partition_ends)
+    partition_idx = 0
+    cur_partition_end = partition_ends[0]
+    while idx_pos < num_idxs:
+        idx = idxr[idx_pos]
+        if idx < 0: idx += size
+        while idx >= cur_partition_end:
+            if cur_partition_idxs:
+                partition_idx_lists[partition_idx] = cur_partition_idxs
+                cur_partition_idxs = []
+            partition_idx += 1
+            if partition_idx == npartitions:
+                break
+            cur_partition_end = partition_ends[partition_idx]
+        cur_partition_idxs.append(idx)
+        idx_pos += 1
+    if cur_partition_idxs:
+        partition_idx_lists[partition_idx] = cur_partition_idxs
+
+    return partition_idx_lists
+@partition_idxr.register(pd.Series)
+def _(idxr, partition_sizes):
+    return partition_idxr(idxr.values, partition_sizes)
+
+@partition_idxr.register(ndarray)
+def _(idxr, partition_sizes):
+    if idxr.dtype == dtype(int):
+        return partition_idxr(idxr.tolist(), partition_sizes)
+    elif idxr.dtype == dtype(bool):
+        size = sum(partition_sizes)
+        if len(idxr) != size:
+            raise ValueError(
+                'Slicing with bool Series of size %d but partition sizes sum to %d (%s)' % (
+                    len(idxr), size, partition_sizes
+                )
+            )
+        return partition_idxr(bools_to_ints(idxr), partition_sizes)
+    else:
+        raise NotImplementedError
+
+@partition_idxr.register(Series)
+def _(idxr, partition_sizes):
+    if idxr.dtype == dtype(int):
+        # TODO: is this case doable?
+        # if not idxr.known_divisions:
+        #     raise ValueError("Can't slice with a Dask series of ints with unknown divisions: %s" % idxr)
+        # divisions = tuple(zip(idxr.divisions, idxr.divisions[1:]))
+        raise NotImplementedError
+    elif idxr.dtype == dtype(bool):
+        if idxr.partition_sizes != partition_sizes:
+            raise ValueError(
+                "Bool dask.dataframe.Series partition_sizes don't match slicee's: %s vs %s; %s" % (
+                    idxr.partition_sizes, partition_sizes, idxr
+                )
+            )
+        return {
+            idx: idxr.partitions[idx]
+            for idx in range(idxr.npartitions)
+        }
+    else:
+        raise NotImplementedError('%s: %s' % (type(idxr), idxr))
+
+
+def slice_block(X, oidx, vidx):
+    # Have to avoid directly slicing w e.g. bool-Series bc spmatrix implements that
+    # incorrectly (False and True just get casted to integer 0 and 1, and you get a
+    # bunch of copies of row 0 and 1, instead of just the rows corresponding to `True`
+    # values in the indexer)
+    oidx = maybe_bools_to_ints(oidx)
+    vidx = maybe_bools_to_ints(vidx)
+    sliced = X[oidx, vidx]
+    return sliced
+
+slice_block = delayed(slice_block)
 
 
 class AnnDataDask(AnnData):
@@ -66,9 +247,6 @@ class AnnDataDask(AnnData):
         # those will need to be kept in sync.
 
         ### BEGIN COPIED FROM ORIGINAL
-
-
-
         if adata_ref.isbacked and adata_ref.is_view:
             raise ValueError(
                 "Currently, you cannot index repeatedly into a backed AnnData, "
@@ -91,15 +269,20 @@ class AnnDataDask(AnnData):
         ### END COPIED FROM ORIGINAL
 
         # views on attributes of adata_ref
-        if (not is_dask(oidx)) and oidx == slice(None, None, None):
+        if (not is_dask(oidx)) and isinstance(oidx, slice) and oidx == slice(None, None, None):
             # If we didn't slice obs, just return the original.
             n_obs = adata_ref.n_obs
             obs_sub = adata_ref.obs
         else:
             if is_dask(oidx) or is_dask(adata_ref.n_obs):
                 n_obs = daskify_get_len_given_index(oidx, adata_ref.n_obs)
-            else:
+            elif isinstance(oidx, slice):
                 n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
+            elif isinstance(oidx, np.ndarray):
+                n_obs = oidx.size
+            else:
+                raise Exception("not implemented for type {oidx}")
+
             if is_dask(adata_ref.obs) or is_dask(oidx):
                 obs_sub = daskify_iloc(adata_ref.obs, oidx)
             else:
@@ -112,13 +295,17 @@ class AnnDataDask(AnnData):
         else:
             if is_dask(vidx) or is_dask(adata_ref.n_vars):
                 n_vars = daskify_get_len_given_index(vidx, adata_ref.n_vars)
-            else:
+            elif isinstance(vidx, slice):
                 n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
+            elif isinstance(vidx, np.ndarray):
+                n_vars = vidx.size
+            else:
+                raise Exception("not implemented for type {vidx}")
+
             if is_dask(adata_ref.var) or is_dask(vidx):
                 var_sub = daskify_iloc(adata_ref.var, vidx)
             else:
                 var_sub = adata_ref.var.iloc[vidx]
-
 
         self._obsm = daskify_method_call(adata_ref.obsm, "_view", self, (oidx,))
         self._varm = daskify_method_call(adata_ref.obsm, "_view", self, (vidx,))
@@ -232,13 +419,69 @@ class AnnDataDask(AnnData):
 
     @property
     def X(self):
+        # TODO: this should all get moved into _init_as_view; we can eagerly use Dask's
+        # laziness, instead of stacking AnnData's (questionable, not robust) laziness
+        # on top of Dask laziness
         if getattr(self, "_X", None) is None:
             if self.is_view:
-                refX: dask.array.Array = self._adata_ref.X
-                def getitem(x, oidx, vidx):
-                    return x[oidx, vidx]
-                viewX = refX.map_blocks(getitem, self._oidx, self._vidx, meta=refX._meta)
-                return viewX
+                X: dask.array.Array = self._adata_ref.X
+                oidx = self._oidx
+                vidx = self._vidx
+
+                row_slice_map = partition_idxr(oidx, X.chunks[0])
+                col_slice_map = partition_idxr(vidx, X.chunks[1])
+
+                def slice_size(idxr):
+                    if is_dask(idxr):
+                        return nan
+                    elif isinstance(idxr, pd.Series) and idxr.dtype == dtype(bool):
+                        return idxr.sum()
+                    elif isinstance(idxr, slice):
+                        return (idxr.stop - idxr.start) // idxr.step
+                    else:
+                        return len(idxr)
+
+                def make_block(r, c):
+                    row_slice = row_slice_map.get(r, [])
+                    col_slice = col_slice_map.get(c, [])
+                    n_rows = slice_size(row_slice)
+                    n_cols = slice_size(col_slice)
+                    return from_delayed(
+                        slice_block(
+                            X.blocks[r, c],
+                            row_slice,
+                            col_slice,
+                        ),
+                        # TODO: when the {row,col}_slice_map values are
+                        #  in-memory (not Dask objects), we can len()
+                        #  them and fill in the post-slice array-block
+                        #  shape here. One caveat: we have not converted
+                        #  bool-slicers to ints yet, so len() on those
+                        #  will not be what you want here; bools.sum()
+                        #  is probably right
+                        shape=(n_rows, n_cols),
+                        dtype=X.dtype,
+                        meta=X._meta,
+                        name='%s-sliced-%s-%s' % (X._name, r, c),
+                    )
+
+                chunks = X.chunks
+                R, C = len(chunks[0]), len(chunks[1])
+                X = \
+                    concatenate(
+                        [
+                            concatenate(
+                                [
+                                    make_block(r, c)
+                                    for c in range(C)
+                                ],
+                                axis=1,
+                                allow_unknown_chunksizes=True,
+                            )
+                            for r in range(R)
+                        ],
+                        allow_unknown_chunksizes=True,
+                    )
             else:
                 X = load_dask_array(path=self.file.filename, key='X',
                                     chunk_size=(self._n_obs, "auto"),
@@ -299,9 +542,14 @@ class AnnDataDask(AnnData):
         return virtual
 
     def compute(self, *args, _debug: bool = False, **kwargs):
-        virtual = self.to_dask_delayed(*args, _debug=_debug, **kwargs)
-        real = virtual.compute(*args, **kwargs)
-        return real
+        return AnnData(
+            X=self.X.compute(),
+            obs=self.obs.compute(),
+            var=self.var.compute(),
+        )
+        # virtual = self.to_dask_delayed(*args, _debug=_debug, **kwargs)
+        # real = virtual.compute(*args, **kwargs)
+        # return real
 
     # NOTE: We override the property accessor but not set/delete.
     # The .uns is immutable on AnnDataDask.  Use .copy_with_changes(...)
@@ -427,6 +675,9 @@ def _(anno, length, index_names):
 
 
 def daskify_iloc(df, idx):
+    # Now works in dask.
+    return df.iloc[idx]
+    """
     def call_iloc(df_, idx_):
         return df_.iloc[idx_]
     meta = df._meta
@@ -434,18 +685,28 @@ def daskify_iloc(df, idx):
         pass
     df = daskify_call_return_df(call_iloc, df, idx, _dask_meta=meta)
     return df
-
+    """
 
 
 def daskify_get_len_given_index(index: slice, orig_len: int):
-    if hasattr(index, "_len"):
-        return getattr(index, "_len")
+    if isinstance(index, Series):
+        if index.dtype == np.dtype(bool):
+            # Size will depend on actual values in each partition; unknown at build time
+            pass
+        else:
+            # If this is a Series of scalars that each select a row, the number of
+            # output rows will match the size of the Series.
+            if hasattr(index, "_len"):
+                return getattr(index, "_len")
 
     def get_size(index_, orig_len_):
         if isinstance(index_, slice):
             len(range(*index_.indices(orig_len_)))
         elif isinstance(index_, pd.Series):
-            return index_.size
+            if index_.dtype == np.dtype(bool):
+                return index_.sum()
+            else:
+                return index_.size
 
     return daskify_call(get_size, index, orig_len)
 
