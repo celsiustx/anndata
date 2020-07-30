@@ -212,7 +212,8 @@ def _(idxr, partition_sizes):
         # divisions = tuple(zip(idxr.divisions, idxr.divisions[1:]))
         raise NotImplementedError
     elif idxr.dtype == dtype(bool):
-        if idxr.partition_sizes != partition_sizes:
+        # TODO: Check that we can ignore None partition_sizes.  Possibly unsafe.
+        if idxr.partition_sizes is not None and idxr.partition_sizes != partition_sizes:
             raise ValueError(
                 "Bool dask.dataframe.Series partition_sizes don't match slicee's: %s vs %s; %s" % (
                     idxr.partition_sizes, partition_sizes, idxr
