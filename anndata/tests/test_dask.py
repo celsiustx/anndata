@@ -84,12 +84,6 @@ def test_cmp_new_old_h5ad(dask):
     #     ad.write_h5ad(path)
 
 
-def filter_on_self_sum(ad):
-    ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
-    adv = ad[ad.obs["umi_counts"] > 10.0]
-    return adv
-
-
 def test_spmatrix_bool_slice():
     from scipy.sparse import csc_matrix, spmatrix
     from scipy import sparse
@@ -104,7 +98,7 @@ def test_spmatrix_bool_slice():
 
 @pytest.mark.parametrize('path', [
     old_path,
-#    new_path
+    new_path
 ])
 def test_dask_load(path):
     ad1 = read_h5ad(path, backed='r', dask=True)
@@ -114,10 +108,11 @@ def test_dask_load(path):
     def check(fn):
         import dask.base
         if callable(fn):
-            #with prevent_method_calls(dask.base.DaskMethodsMixin, "compute"):
-            v_dask = fn(ad1)
+            with prevent_method_calls(dask.base.DaskMethodsMixin, "compute"):
+                v_dask = fn(ad1)
             v_mem = fn(ad2)
-            eq(v_dask, v_mem)
+            with dask.config.set(scheduler='sync'):
+                eq(v_dask, v_mem)
         else:
             raise NotImplementedError(f"Not callable!: {fn}")
 
@@ -133,56 +128,45 @@ def test_dask_load(path):
             getattr(ad2, k)
         )
 
-    # check((
-    #     'X',
-    #     'obs',
-    #     'var',
-    #     # TODO: obsm, varm, obsp, varp, uns, layers, raw
-    # ))
-    #
-    # # Basic support.
-    # check((
-    #     lambda ad: ad.X * 2,
-    #
-    #     lambda ad: ad.obs.Prime,
-    #     lambda ad: ad.obs['Prime'],
-    #     lambda ad: ad.obs[['Prime', 'idx²']],
-    #
-    #     lambda ad: ad.var.name,
-    #     lambda ad: ad.var['name'],
-    #     lambda ad: ad.var[['sqrt(idx)', 'name']],
-    #
-    #     lambda ad: ad.X[:],
-    #     lambda ad: ad.X[:10],
-    #     lambda ad: ad.X[:20, :20],
-    # ))
-    #
-    # # These possibly work with AnnDataDask modifications.
-    # # They go through AnnDataDask.__get_item__(ix)
-    # check((
-    #     lambda ad: ad[:10],
-    #     lambda ad: ad[:10, :10],
-    #
-    #     lambda ad: ad[0, :10],
-    #     lambda ad: ad[:10, 0],
-    #
-    #     lambda ad: ad[:, :10],
-    #     lambda ad: ad[:10, :],
-    #
-    #     lambda ad: ad[10, 10],
-    # ))
-    #
-    # check(lambda ad: ad.X.sum(axis=1).A.flatten())
+    check('X')
+    check('obs')
+    check('var')
+    # TODO: obsm, varm, obsp, varp, uns, layers, raw
+
+    # Basic support.
+    check(lambda ad: ad.X * 2)
+
+    check(lambda ad: ad.obs.Prime)
+    check(lambda ad: ad.obs['Prime'])
+    check(lambda ad: ad.obs[['Prime', 'idx²']])
+
+    check(lambda ad: ad.var.name)
+    check(lambda ad: ad.var['name'])
+    check(lambda ad: ad.var[['sqrt(idx)', 'name']])
+
+    check(lambda ad: ad.X[:])
+    check(lambda ad: ad.X[:10])
+    check(lambda ad: ad.X[:20, :20])
+
+    # These possibly work with AnnDataDask modifications.
+    # They go through AnnDataDask.__get_item__(ix)
+    check(lambda ad: ad[:10])
+    check(lambda ad: ad[:10, :10])
+
+    check(lambda ad: ad[0, :10])
+    check(lambda ad: ad[:10, 0])
+
+    check(lambda ad: ad[:, :10])
+    check(lambda ad: ad[:10, :])
+
+    check(lambda ad: ad[10, 10])
+
+    check(lambda ad: ad.X.sum(axis=1).A.flatten())
 
     # def assign_umi_counts(ad):
     #     ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
     #     return ad
     # check(assign_umi_counts)
-
-    # def filter_on_self_sum(ad):
-    #     ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
-    #     adv = ad[ad.obs["umi_counts"] > 10.0]
-    #     return adv
 
     # def slice_obs_by_umi_counts(ad):
     #     ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
@@ -197,11 +181,13 @@ def test_dask_load(path):
     #     return sliced
     # check(slice_X_by_umi_counts)
 
-
     # Higher level ops are defined as functions above.
-    check(
-       filter_on_self_sum,
-    )
+    def filter_on_self_sum(ad):
+        ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
+        adv = ad[ad.obs["umi_counts"] > 10.0]
+        return adv
+
+    check(filter_on_self_sum)
 
     # For these to work, we need to update how dask dataframes work,
     # or use a custom dataframe subclass with more features.
@@ -222,7 +208,8 @@ def test_dask_load(path):
     check(lambda ad: ad.obs.loc[:, ['Prime', 'label']])
     check(lambda ad: ad.obs.loc[:, 'label'])
 
-    # Integer ranges don't work in .loc because obs.index holds strs; this is true in non-dask mode, but seems broken
+    # Integer ranges don't work in .loc because obs.index holds strs; this is true in
+    # non-dask mode, but seems generally broken as AnnData semantics
     # check(lambda ad: ad.obs.loc[:10, :])
     # check(lambda ad: ad.obs.loc[:10, ['Prime', 'label']])
     # check(lambda ad: ad.obs.loc[:10, 'label'])
