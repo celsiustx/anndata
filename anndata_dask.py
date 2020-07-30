@@ -227,6 +227,10 @@ def _(idxr, partition_sizes):
 
 
 def slice_block(X, oidx, vidx):
+    # Have to avoid directly slicing w e.g. bool-Series bc spmatrix implements that
+    # incorrectly (False and True just get casted to integer 0 and 1, and you get a
+    # bunch of copies of row 0 and 1, instead of just the rows corresponding to `True`
+    # values in the indexer)
     oidx = maybe_bools_to_ints(oidx)
     vidx = maybe_bools_to_ints(vidx)
     sliced = X[oidx, vidx]
@@ -415,44 +419,69 @@ class AnnDataDask(AnnData):
 
     @property
     def X(self):
+        # TODO: this should all get moved into _init_as_view; we can eagerly use Dask's
+        # laziness, instead of stacking AnnData's (questionable, not robust) laziness
+        # on top of Dask laziness
         if getattr(self, "_X", None) is None:
             if self.is_view:
-                refX: dask.array.Array = self._adata_ref.X
-
-                X = refX
+                X: dask.array.Array = self._adata_ref.X
                 oidx = self._oidx
                 vidx = self._vidx
 
-                oidx = partition_idxr(oidx, X.chunks[0])
-                vidx = partition_idxr(vidx, X.chunks[1])
+                row_slice_map = partition_idxr(oidx, X.chunks[0])
+                col_slice_map = partition_idxr(vidx, X.chunks[1])
+
+                def slice_size(idxr):
+                    if is_dask(idxr):
+                        return nan
+                    elif isinstance(idxr, pd.Series) and idxr.dtype == dtype(bool):
+                        return idxr.sum()
+                    elif isinstance(idxr, slice):
+                        return (idxr.stop - idxr.start) // idxr.step
+                    else:
+                        return len(idxr)
+
+                def make_block(r, c):
+                    row_slice = row_slice_map.get(r, [])
+                    col_slice = col_slice_map.get(c, [])
+                    n_rows = slice_size(row_slice)
+                    n_cols = slice_size(col_slice)
+                    return from_delayed(
+                        slice_block(
+                            X.blocks[r, c],
+                            row_slice,
+                            col_slice,
+                        ),
+                        # TODO: when the {row,col}_slice_map values are
+                        #  in-memory (not Dask objects), we can len()
+                        #  them and fill in the post-slice array-block
+                        #  shape here. One caveat: we have not converted
+                        #  bool-slicers to ints yet, so len() on those
+                        #  will not be what you want here; bools.sum()
+                        #  is probably right
+                        shape=(n_rows, n_cols),
+                        dtype=X.dtype,
+                        meta=X._meta,
+                        name='%s-sliced-%s-%s' % (X._name, r, c),
+                    )
 
                 chunks = X.chunks
                 R, C = len(chunks[0]), len(chunks[1])
-                result = \
+                X = \
                     concatenate(
                         [
                             concatenate(
                                 [
-                                    from_delayed(
-                                        slice_block(
-                                            X.blocks[r, c],
-                                            oidx.get(r, []),
-                                            vidx.get(c, []),
-                                        ),
-                                        shape=(nan, nan),
-                                        dtype=X.dtype,
-                                        meta=X._meta,
-                                        name='%s-sliced-%s-%s' % (X._name, r, c),
-                                    )
+                                    make_block(r, c)
                                     for c in range(C)
                                 ],
                                 axis=1,
+                                allow_unknown_chunksizes=True,
                             )
                             for r in range(R)
-                        ]
+                        ],
+                        allow_unknown_chunksizes=True,
                     )
-
-                return result
             else:
                 X = load_dask_array(path=self.file.filename, key='X',
                                     chunk_size=(self._n_obs, "auto"),
@@ -513,9 +542,14 @@ class AnnDataDask(AnnData):
         return virtual
 
     def compute(self, *args, _debug: bool = False, **kwargs):
-        virtual = self.to_dask_delayed(*args, _debug=_debug, **kwargs)
-        real = virtual.compute(*args, **kwargs)
-        return real
+        return AnnData(
+            X=self.X.compute(),
+            obs=self.obs.compute(),
+            var=self.var.compute(),
+        )
+        # virtual = self.to_dask_delayed(*args, _debug=_debug, **kwargs)
+        # real = virtual.compute(*args, **kwargs)
+        # return real
 
     # NOTE: We override the property accessor but not set/delete.
     # The .uns is immutable on AnnDataDask.  Use .copy_with_changes(...)

@@ -84,17 +84,6 @@ def test_cmp_new_old_h5ad(dask):
     #     ad.write_h5ad(path)
 
 
-def test_spmatrix_bool_slice():
-    from scipy.sparse import csc_matrix, spmatrix
-    from scipy import sparse
-
-    csc = sparse.random(10, 10, density=0.1, format='csc')
-    rows = [True]*10
-    l = csc[rows]
-    l = l.A
-    A = csc.A
-    r = A[rows]
-    assert_array_equal(l, r)
 
 @pytest.mark.parametrize('path', [
     old_path,
@@ -163,6 +152,9 @@ def test_dask_load(path):
 
     check(lambda ad: ad.X.sum(axis=1).A.flatten())
 
+    # These all work individually, but multiple in sequence fail, probably due to the
+    # "umi_counts" column being assigned, and that actually mutating things.
+
     # def assign_umi_counts(ad):
     #     ad.obs["umi_counts"] = ad.X.sum(axis=1).A.flatten()
     #     return ad
@@ -188,12 +180,6 @@ def test_dask_load(path):
         return adv
 
     check(filter_on_self_sum)
-
-    # For these to work, we need to update how dask dataframes work,
-    # or use a custom dataframe subclass with more features.
-    # Either case will possibly use normalization like the AnnDataDask.__get_item__(),
-    # since that method does successfully create indexes that will slice an obs or var.
-    # iloc'ing row(s)/col(s) mostly does not work out, of the box:
 
     # Pandas squeezes a dimension out of these (i.e. Series -> int, or DataFrame ->
     # Series; Dask should be able to detect at build time that it's going to happen,
