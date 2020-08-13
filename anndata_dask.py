@@ -242,6 +242,18 @@ slice_block = delayed(slice_block)
 
 class AnnDataDask(AnnData):
 
+    def __getstate__(self):
+        if self.is_view:
+            raise Exception("AnnDataDask should not have be a view, since it uses dask for view logic.")
+        else:
+            return self.file.filename
+
+    def __setstate__(self, filename):
+        from anndata import read_h5ad
+        self2 = read_h5ad(filename, backed="r", dask=True)
+        for k, v in self2.__dict__.items():
+            setattr(self, k, v)
+
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
         # NOTE: This method has a large chunk at the beginning and end that is
         # copied from the parent _init_as_view.  Unless we refactor the parent
