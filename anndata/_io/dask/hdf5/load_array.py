@@ -108,7 +108,7 @@ def load_dask_array(
         X = SparseDataset(X, **to_array_kwargs)
 
         # Use more precise metadata for sparse results.
-        fmt = to_array_kwargs["format_str"]
+        fmt = X.format_str
         if fmt == "csr":
             meta = scipy.sparse.csr_matrix(X.shape, dtype=X.dtype)
         elif fmt == "csc":
