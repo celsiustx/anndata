@@ -138,6 +138,5 @@ def load_dask_dataframe(
     meta = get_slice(path, key, 0, 0, columns=columns, index_col=index_col)
 
     ddf = from_delayed(chunks, meta=meta)
-    ddf._len = n_rows
     ddf.partition_sizes = [ end-start for start, end in chunk_slices ]
     return ddf

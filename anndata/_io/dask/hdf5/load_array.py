@@ -80,7 +80,7 @@ def load_dask_array(
     *,
     X=None,
     path=None, key=None,
-    chunk_size ='auto',
+    chunk_size='auto',
     to_array=sparse_hdf5_group_to_backed_dataset,
     **to_array_kwargs
 ) -> Array:
