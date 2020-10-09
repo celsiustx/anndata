@@ -270,7 +270,7 @@ class AnnDataDask(AnnData):
         ### END COPIED FROM ORIGINAL
 
         # views on attributes of adata_ref
-        if (not is_dask(oidx)) and isinstance(oidx, slice) and oidx == slice(None, None, None):
+        if isinstance(oidx, slice) and oidx == slice(None, None, None):
             # If we didn't slice obs, just return the original.
             n_obs = adata_ref.n_obs
             obs_sub = adata_ref.obs
@@ -289,7 +289,7 @@ class AnnDataDask(AnnData):
             else:
                 obs_sub = adata_ref.obs.iloc[oidx]
 
-        if (not is_dask(vidx)) and vidx == slice(None, None, None):
+        if isinstance(vidx, slice) and vidx == slice(None, None, None):
             # If we didnt' slice var, just return the original.
             var_sub = adata_ref.var
             n_vars = adata_ref.n_vars
@@ -343,10 +343,17 @@ class AnnDataDask(AnnData):
         #def mk_dict_view(dat, ann, key):
         #    return DictView(dat, view_args=(ann, key))
 
-        self._obs = daskify_call_return_df(mk_dataframe_view, obs_sub, self, "obs",
-                                           _dask_meta=obs_sub._meta)
-        self._var = daskify_call_return_df(mk_dataframe_view, var_sub, self, "var",
-                                           _dask_meta=var_sub._meta)
+        if is_dask(obs_sub):
+            self._obs = daskify_call_return_df(mk_dataframe_view, obs_sub, self, "obs",
+                                               _dask_meta=obs_sub._meta)
+        else:
+            self._obs = obs_sub
+        if is_dask(var_sub):
+            self._var = daskify_call_return_df(mk_dataframe_view, var_sub, self, "var",
+                                               _dask_meta=var_sub._meta)
+        else:
+            self._var = var_sub
+
         #self._uns = daskify_call(mk_dict_view, uns_new, self, "uns")
 
         ### BEGIN COPIED FROM ORIGINAL
@@ -740,25 +747,38 @@ def daskify_method_call(obj, method_name, *args, _dask_obj_type=None, _dask_len=
                                % (_dask_obj_type, obj_, method_name_))
         bound_method = getattr(obj_, method_name_)
         return bound_method(*args, **kwargs)
-
-    return daskify_call(call_method, obj, method_name, *args, _dask_len=_dask_len, **kwargs)
+    if is_dask(obj):
+        return daskify_call(call_method, obj, method_name, *args, _dask_len=_dask_len, **kwargs)
+    else:
+        return getattr(obj, method_name)(*args, **kwargs)
 
 
 def daskify_calc_shape(old_shape, one_slice_per_dim):
     def get_new_len(dim_len, dim_slice):
-        if dim_slice == slice(None, None, None):
-            return dim_len
-        if dim_slice.step == 1:
-            # Do the common/simple version with math.
-            stop = np.min(dim_slice.stop, dim_len)
-            if stop >= dim_slice.start:
-                return dim_slice.stop - dim_slice.start
+        if isinstance(dim_slice, slice):
+            start = 0 if dim_slice.start is None else dim_slice.start
+            stop = dim_len if dim_slice.stop is None else dim_slice.stop
+            step = 1 if dim_slice.step is None else dim_slice.step
+            if start < 0:
+                start += dim_len
+                assert start >= 0
+            if stop < 0:
+                stop += dim_len
+                assert stop >= 0
+            if stop < start:
+                m, M = stop, start
+                start, stop = m, M
+                step = -step
+            stop = min(stop, dim_len)
+            return (stop - start) // abs(step)
+        elif isinstance(dim_slice, np.ndarray):
+            if dim_slice.dtype == np.dtype(bool):
+                assert dim_slice.shape == (dim_len,)
+                return dim_slice.sum()
             else:
-                return
+                return len(dim_slice)
         else:
-            # TODO: There is a way to calculate when the step is not 1.
-            logger.warning("TODO: Verify slice calculation with stepping!")
-            new_shape[dim] = range(*dim_slice.indices(dim_len))
+            raise Exception('Unexpected slice: %s' % str(dim_slice))
 
     # TODO: Double check this especially with stepping.
     new_shape = []
