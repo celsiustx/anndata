@@ -121,14 +121,15 @@ def _normalize_index(
                 )
             return positions  # np.ndarray[int]
     elif is_dask(indexer):
-
-        return indexer
+        raise NotImplementedError("Dask slicing only supported on AnndataDask subclass")
+        #return indexer
     elif is_dask(index):
         # NOTE: The index is the first arg b/c we are mapping, though _normalize_index
         # expects it to be the 2nd arg.
-        def f(index, indexer):
-            return _normalize_index(indexer, index.values)
-        indexer.map_partitions(f, indexer, meta=index._meta)
+        # def f(index, indexer):
+        #     return _normalize_index(indexer, index.values)
+        # indexer.map_partitions(f, indexer, meta=index._meta)
+        raise NotImplementedError("Dask slicing only supported on AnndataDask subclass")
     else:
         raise IndexError(f"Unknown indexer {indexer!r} of type {type(indexer)}")
 

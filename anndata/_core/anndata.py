@@ -1130,7 +1130,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     def __getitem__(self, index: Index) -> "AnnData":
         """Returns a sliced view of the object."""
         oidx, vidx = self._normalize_indices(index)
-        return self.__class__(self, oidx=oidx, vidx=vidx, asview=True)
+        return AnnData(self, oidx=oidx, vidx=vidx, asview=True)
 
     def _remove_unused_categories(self, df_full, df_sub, uns, inplace=True):
         from pandas.api.types import is_categorical

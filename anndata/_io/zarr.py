@@ -275,7 +275,8 @@ def read_attribute(value, dask: bool = False):
 @report_read_key_on_error
 def read_dataset(dataset: zarr.Array, dask: bool = False):
     if dask:
-        raise NotImplementedError
+        import dask.array as da
+        return da.from_zarr(url=dataset.store.path, component=dataset.name)
     else:
         value = dataset[...]
         if not hasattr(value, "dtype"):
@@ -335,8 +336,8 @@ def read_dataframe_legacy(dataset: zarr.Array, dask: bool = False) -> pd.DataFra
     """Reads old format of dataframes"""
     # NOTE: Likely that categoricals need to be removed from uns
     if dask:
-        import dask.dataframe as dd
-        raise NotImplementedError
+        from anndata._io.dask.zarr.load_dataframe import load_dask_dataframe
+        df = load_dask_dataframe(dataset=dataset, index_col=lambda df: df.columns[0])
     else:
         df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
         df.set_index(df.columns[0], inplace=True)

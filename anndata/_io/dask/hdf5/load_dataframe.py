@@ -8,7 +8,6 @@ try:
 except ImportError:
     from contextlib import suppress as nullcontext
 
-import dask as dsk
 import dask.dataframe as dd
 from dask.dataframe import from_delayed
 from dask.delayed import delayed

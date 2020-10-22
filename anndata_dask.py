@@ -27,16 +27,17 @@ from scipy import sparse
 
 import dask
 from dask import delayed
-import dask.dataframe
-from dask.dataframe import Series
-import dask.array
+import dask.dataframe as dd
+from dask.dataframe import DataFrame, Series
+import dask.array as da
+from dask.array import Array
 from dask.array import from_delayed, concatenate
 from dask.array.backends import register_scipy_sparse
 
 from anndata._core.anndata import _gen_dataframe
 from anndata._core.anndata import AnnData, ImplicitModificationWarning
 from anndata._io.dask.hdf5.load_array import load_dask_array
-from anndata._core.index import _subset, Index, unpack_index
+from anndata._core.index import _subset, Index, unpack_index, _normalize_indices
 from anndata._core.aligned_mapping import (
     AxisArrays,
     PairwiseArrays,
@@ -48,7 +49,6 @@ from anndata._core.views import (
 )
 from anndata.utils import convert_to_dict
 from anndata.logging import anndata_logger as logger
-
 
 register_scipy_sparse()
 
@@ -133,6 +133,11 @@ def _(idxr, partition_sizes):
             partition_slices[partition_idx] = slice(first, last, Δ)
 
     return partition_slices
+
+@partition_idxr.register(int)
+@partition_idxr.register(np.integer)
+def _(idxr, partition_sizes):
+    return partition_idxr(range(idxr, idxr+1), partition_sizes)
 
 @partition_idxr.register(list)
 @partition_idxr.register(tuple)
@@ -241,134 +246,152 @@ slice_block = delayed(slice_block)
 
 
 class AnnDataDask(AnnData):
+    def _init_as_actual(
+        self,
+        X=None,
+        obs=None,
+        var=None,
+        uns=None,
+        obsm=None,
+        varm=None,
+        varp=None,
+        obsp=None,
+        raw=None,
+        layers=None,
+        dtype="float32",
+        shape=None,
+        filename=None,
+        filemode=None,
+        fd=None
+    ):
+        AnnData._init_as_actual(self, X, obs, var, uns, obsm, varm, varp, obsp, raw, layers, dtype, shape, filename, filemode, fd)
+        X = load_dask_array(path=self.file.filename, key='X',
+                            chunk_size=(self._n_obs, "auto"),
+                            shape=self.shape)
+        self._X = X
+
+    @classmethod
+    def slice_df(cls, df, idx: Index):
+        #slice_type = None  # int, str, bool, None
+        if isinstance(idx, (int, np.integer)):
+            idx = np.array([idx])
+            slice_type = int
+        elif isinstance(idx, slice):
+            if idx == slice(None):
+                slice_type = None
+            else:
+                # start = idx.start or 0
+                # stop = idx.stop
+                # m, M = min(idx.start, idx.stop)
+                # idx = range(idx.start, idx.stop, idx.step)
+                slice_type = int
+        elif isinstance(idx, range):
+            slice_type = int
+        elif isinstance(idx, (list, set)):
+            if not idx:
+                slice_type = None
+            else:
+                i = idx[0]
+                if isinstance(i, int):
+                    slice_type = int
+                elif isinstance(i, str):
+                    slice_type = str
+                elif isinstance(i, bool):
+                    slice_type = bool
+                else:
+                    raise ValueError('Unsupported slice type: list/set of %s; %s' % (type(i), str(idx[:100])))
+        elif isinstance(idx, (np.ndarray, pd.Series, dd.Series, da.Array)):
+            if idx.dtype == np.dtype('int64'):
+                slice_type = int
+            elif idx.dtype == np.dtype('O'):
+                slice_type = str
+            elif idx.dtype == np.dtype('bool'):
+                slice_type = bool
+            else:
+                raise ValueError('Unsupported slice type: ndarray of %s; %s' % (str(idx.dtype), str(idx[:100])))
+        else:
+            raise ValueError('Unsupported slice type: %s; %s' % (str(type(idx)), str(idx)))
+
+        if slice_type is int:
+            return df.iloc[idx]
+        elif slice_type is str:
+            return df.loc[idx]
+        elif slice_type is bool:
+            return df[idx]
+        else:
+            assert slice_type is None
+            return df
 
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
         # NOTE: This method has a large chunk at the beginning and end that is
         # copied from the parent _init_as_view.  Unless we refactor the parent
         # those will need to be kept in sync.
+        obs = self.slice_df(adata_ref.obs, oidx)
+        self._obs = obs
+        var = self.slice_df(adata_ref.var, vidx)
+        self._var = var
+        X: dask.array.Array = adata_ref.X
 
-        ### BEGIN COPIED FROM ORIGINAL
-        if adata_ref.isbacked and adata_ref.is_view:
-            raise ValueError(
-                "Currently, you cannot index repeatedly into a backed AnnData, "
-                "that is, you cannot make a view of a view."
+        row_slice_map = partition_idxr(oidx, X.chunks[0])
+        col_slice_map = partition_idxr(vidx, X.chunks[1])
+
+        def slice_size(idxr):
+            if is_dask(idxr):
+                return nan
+            elif isinstance(idxr, pd.Series) and idxr.dtype == dtype(bool):
+                return idxr.sum()
+            elif isinstance(idxr, slice):
+                return (idxr.stop - idxr.start) // idxr.step
+            else:
+                return len(idxr)
+
+        def make_block(r, c):
+            row_slice = row_slice_map.get(r, [])
+            col_slice = col_slice_map.get(c, [])
+            n_rows = slice_size(row_slice)
+            n_cols = slice_size(col_slice)
+            return from_delayed(
+                slice_block(
+                    X.blocks[r, c],
+                    row_slice,
+                    col_slice,
+                ),
+                # TODO: when the {row,col}_slice_map values are
+                #  in-memory (not Dask objects), we can len()
+                #  them and fill in the post-slice array-block
+                #  shape here. One caveat: we have not converted
+                #  bool-slicers to ints yet, so len() on those
+                #  will not be what you want here; bools.sum()
+                #  is probably right
+                shape=(n_rows, n_cols),
+                dtype=X.dtype,
+                meta=X._meta,
+                name='%s-sliced-%s-%s' % (X._name, r, c),
             )
-        self._is_view = True
-        if isinstance(oidx, (int, np.integer)):
-            oidx = slice(oidx, oidx + 1, 1)
-        if isinstance(vidx, (int, np.integer)):
-            vidx = slice(vidx, vidx + 1, 1)
-        if adata_ref.is_view:
-            prev_oidx, prev_vidx = adata_ref._oidx, adata_ref._vidx
-            adata_ref = adata_ref._adata_ref
-            oidx, vidx = _resolve_idxs((prev_oidx, prev_vidx), (oidx, vidx), adata_ref)
-        self._adata_ref = adata_ref
-        self._oidx = oidx
-        self._vidx = vidx
-        # the file is the same as of the reference object
-        self.file = adata_ref.file
-        ### END COPIED FROM ORIGINAL
 
-        # views on attributes of adata_ref
-        if isinstance(oidx, slice) and oidx == slice(None, None, None):
-            # If we didn't slice obs, just return the original.
-            n_obs = adata_ref.n_obs
-            obs_sub = adata_ref.obs
-        else:
-            if is_dask(oidx) or is_dask(adata_ref.n_obs):
-                n_obs = daskify_get_len_given_index(oidx, adata_ref.n_obs)
-            elif isinstance(oidx, slice):
-                n_obs = len(range(*oidx.indices(adata_ref.n_obs)))
-            elif isinstance(oidx, np.ndarray):
-                n_obs = oidx.size
-            else:
-                raise Exception("not implemented for type {oidx}")
+        chunks = X.chunks
+        R, C = len(chunks[0]), len(chunks[1])
+        X = \
+            concatenate(
+                [
+                    concatenate(
+                        [
+                            make_block(r, c)
+                            for c in range(C)
+                        ],
+                        axis=1,
+                        allow_unknown_chunksizes=True,
+                    )
+                    for r in range(R)
+                ],
+                allow_unknown_chunksizes=True,
+            )
 
-            if is_dask(adata_ref.obs) or is_dask(oidx):
-                obs_sub = daskify_iloc(adata_ref.obs, oidx)
-            else:
-                obs_sub = adata_ref.obs.iloc[oidx]
-
-        if isinstance(vidx, slice) and vidx == slice(None, None, None):
-            # If we didnt' slice var, just return the original.
-            var_sub = adata_ref.var
-            n_vars = adata_ref.n_vars
-        else:
-            if is_dask(vidx) or is_dask(adata_ref.n_vars):
-                n_vars = daskify_get_len_given_index(vidx, adata_ref.n_vars)
-            elif isinstance(vidx, slice):
-                n_vars = len(range(*vidx.indices(adata_ref.n_vars)))
-            elif isinstance(vidx, np.ndarray):
-                n_vars = vidx.size
-            else:
-                raise Exception("not implemented for type {vidx}")
-
-            if is_dask(adata_ref.var) or is_dask(vidx):
-                var_sub = daskify_iloc(adata_ref.var, vidx)
-            else:
-                var_sub = adata_ref.var.iloc[vidx]
-
-        self._obsm = daskify_method_call(adata_ref.obsm, "_view", self, (oidx,))
-        self._varm = daskify_method_call(adata_ref.obsm, "_view", self, (vidx,))
-        self._layers = daskify_method_call(adata_ref.layers, "_view", self, (oidx, vidx))
-        self._obsp = daskify_method_call(adata_ref.obsp, "_view", self, oidx)
-        self._varp = daskify_method_call(adata_ref.varp, "_view", self, vidx)
+        self._X = X
+        # TODO: {{obs,var}{m,p},uns}
 
         # Bunt on uns for now, and get test cases.
         self._uns = adata_ref._uns.copy()
-        """
-        if is_dask(adata_ref._uns):
-            uns_meta = adata_ref._uns._meta
-        else:
-            uns_meta = OrderedDict()
-
-        # Special case for old neighbors, backwards compat. Remove in anndata 0.8.
-        uns_new1 = daskify_call(_slice_uns_sparse_matrices, adata_ref._uns,
-                                self._oidx, adata_ref.n_obs)
-        uns_new2 = daskify_method_call(self, "_remove_unused_categories",
-                                       adata_ref.obs, obs_sub, uns_new1,
-                                       inplace=False)
-        uns_new = daskify_method_call(self, "_remove_unused_categories",
-                                      adata_ref.var, var_sub, uns_new2,
-                                      inplace=False)
-        """
-
-        self._n_obs = n_obs
-        self._n_vars = n_vars
-
-        # set attributes
-        def mk_dataframe_view(sub, ann, key):
-            return DataFrameView(sub, view_args=(ann, key))
-
-        #def mk_dict_view(dat, ann, key):
-        #    return DictView(dat, view_args=(ann, key))
-
-        if is_dask(obs_sub):
-            self._obs = daskify_call_return_df(mk_dataframe_view, obs_sub, self, "obs",
-                                               _dask_meta=obs_sub._meta)
-        else:
-            self._obs = obs_sub
-        if is_dask(var_sub):
-            self._var = daskify_call_return_df(mk_dataframe_view, var_sub, self, "var",
-                                               _dask_meta=var_sub._meta)
-        else:
-            self._var = var_sub
-
-        #self._uns = daskify_call(mk_dict_view, uns_new, self, "uns")
-
-        ### BEGIN COPIED FROM ORIGINAL
-        # set data
-        if self.isbacked:
-            self._X = None
-
-        # set raw, easy, as it’s immutable anyways...
-        if adata_ref._raw is not None:
-            # slicing along variables axis is ignored
-            self._raw = adata_ref.raw[oidx]
-            self._raw._adata = self
-        else:
-            self._raw = None
-        ### END COPIED FROM ORIGINAL
 
     def _create_axis_arrays(self, axis, vals_raw):
         if is_dask(self.obs) or is_dask(self.var):
@@ -416,7 +439,6 @@ class AnnDataDask(AnnData):
                 if len(keys) > 0:
                     descr += f"\n    {attr}: {str(list(keys))[1:-1]}"
             else:
-                from dask.dataframe import DataFrame
                 if isinstance(obj, DataFrame):
                     descr += f"\n    {attr}: {str(obj.columns.tolist())[1:-1]}"
                 else:
@@ -427,82 +449,27 @@ class AnnDataDask(AnnData):
 
     @property
     def X(self):
-        # TODO: this should all get moved into _init_as_view; we can eagerly use Dask's
-        # laziness, instead of stacking AnnData's (questionable, not robust) laziness
-        # on top of Dask laziness
-        if getattr(self, "_X", None) is None:
-            if self.is_view:
-                X: dask.array.Array = self._adata_ref.X
-                oidx = self._oidx
-                vidx = self._vidx
-
-                row_slice_map = partition_idxr(oidx, X.chunks[0])
-                col_slice_map = partition_idxr(vidx, X.chunks[1])
-
-                def slice_size(idxr):
-                    if is_dask(idxr):
-                        return nan
-                    elif isinstance(idxr, pd.Series) and idxr.dtype == dtype(bool):
-                        return idxr.sum()
-                    elif isinstance(idxr, slice):
-                        return (idxr.stop - idxr.start) // idxr.step
-                    else:
-                        return len(idxr)
-
-                def make_block(r, c):
-                    row_slice = row_slice_map.get(r, [])
-                    col_slice = col_slice_map.get(c, [])
-                    n_rows = slice_size(row_slice)
-                    n_cols = slice_size(col_slice)
-                    return from_delayed(
-                        slice_block(
-                            X.blocks[r, c],
-                            row_slice,
-                            col_slice,
-                        ),
-                        # TODO: when the {row,col}_slice_map values are
-                        #  in-memory (not Dask objects), we can len()
-                        #  them and fill in the post-slice array-block
-                        #  shape here. One caveat: we have not converted
-                        #  bool-slicers to ints yet, so len() on those
-                        #  will not be what you want here; bools.sum()
-                        #  is probably right
-                        shape=(n_rows, n_cols),
-                        dtype=X.dtype,
-                        meta=X._meta,
-                        name='%s-sliced-%s-%s' % (X._name, r, c),
-                    )
-
-                chunks = X.chunks
-                R, C = len(chunks[0]), len(chunks[1])
-                X = \
-                    concatenate(
-                        [
-                            concatenate(
-                                [
-                                    make_block(r, c)
-                                    for c in range(C)
-                                ],
-                                axis=1,
-                                allow_unknown_chunksizes=True,
-                            )
-                            for r in range(R)
-                        ],
-                        allow_unknown_chunksizes=True,
-                    )
-            else:
-                X = load_dask_array(path=self.file.filename, key='X',
-                                    chunk_size=(self._n_obs, "auto"),
-                                    shape=self.shape)
-                # NOTE: The original code has logic for when the backed X
-                # comes from a Dataset below.  See the TODO below.
-            self._X = X
         return self._X
 
     @X.setter
     def X(self, value: Optional[Union[np.ndarray, sparse.spmatrix]]):
         raise NotImplementedError("The AnnDataDask.X is immutable!  "
                                   "To change attributes, make an updated copy() method...")
+
+    def _normalize_indices(self, index: Optional[Index]) -> Tuple[slice, slice]:
+        if isinstance(index, tuple):
+            if len(index) == 1:
+                oix = index[0]
+                vix = slice(None)
+            elif len(index) == 2:
+                oix, vix = index
+            else:
+                raise ValueError("Slice must be on 1 or 2 dimensions, not %d: %s" % (len(index), index))
+        else:
+            oix = index
+            vix = slice(None)
+        return oix, vix
+        #return _normalize_indices(index, self.obs_names, self.var_names)
 
     def __getitem__(self, index: Index) -> "AnnData":
         """Returns a sliced view of the object."""
@@ -673,7 +640,7 @@ class AnnDataDask(AnnData):
         return self.__class__(**kw)
 
 
-@_gen_dataframe.register(dask.dataframe.DataFrame)
+@_gen_dataframe.register(DataFrame)
 def _(anno, length, index_names):
     anno = anno.copy()
     if not is_string_dtype(anno.index):
@@ -806,7 +773,7 @@ def daskify_call_return_array(f: callable, *args, _dask_shape, _dask_dtype, _das
 
 
 def daskify_call_return_df(f: callable, *args, _dask_len=None, _dask_meta=None, _dask_output_types=pd.DataFrame, **kwargs):
-    return dask.dataframe.from_delayed(
+    return dd.from_delayed(
         daskify_call(f, *args, _dask_len=_dask_len, _dask_output_types=_dask_output_types, **kwargs),
         meta=_dask_meta,
         verify_meta=True
