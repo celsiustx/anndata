@@ -1,5 +1,5 @@
+numpy>=1.15
 pandas>=1.0,<1.1
-numpy~=1.14
 scipy~=1.0
 h5py==2.10.0
 dataclasses

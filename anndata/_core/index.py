@@ -146,7 +146,7 @@ def unpack_index(index: Index) -> Tuple[Index1D, Index1D]:
 
 
 @singledispatch
-def _subset(a: Union[np.ndarray, spmatrix, pd.DataFrame], subset_idx: Index):
+def _subset(a: Union[np.ndarray, pd.DataFrame], subset_idx: Index):
     # Select as combination of indexes, not coordinates
     # Correcting for indexing behaviour of np.ndarray
     if all(isinstance(x, cabc.Iterable) for x in subset_idx):
@@ -170,6 +170,14 @@ def _subset_dask_array(a: da.Array, idx: Index):
 def _subset_dask_general(a: dask_base.DaskMethodsMixin, subset_idx: Index):
     from anndata_dask import daskify_call
     return daskify_call(_subset, subset_idx)
+
+@_subset.register(spmatrix)
+def _subset_spmatrix(a: spmatrix, subset_idx: Index):
+    # Correcting for indexing behaviour of sparse.spmatrix
+    if len(subset_idx) > 1 and all(isinstance(x, cabc.Iterable) for x in subset_idx):
+        subset_idx = (subset_idx[0].reshape(-1, 1), *subset_idx[1:])
+    return a[subset_idx]
+
 
 @_subset.register(pd.DataFrame)
 def _subset_df(df: pd.DataFrame, subset_idx: Index):

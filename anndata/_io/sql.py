@@ -16,7 +16,7 @@ ddf_to_sql = delayed(df_to_sql)
 
 
 from anndata import AnnData
-from .h5chunk import Chunk
+from .dask.hdf5.h5chunk import Chunk
 
 
 # TODO: will overflow at 2**32, but performance is notably worse using Postgres `bigint` types, so leave as-is for now, until better optimizing can be done on a per-table basis

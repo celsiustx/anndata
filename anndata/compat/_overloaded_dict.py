@@ -2,6 +2,7 @@ from collections.abc import MutableMapping
 from functools import partial
 from typing import Any, Callable, Mapping, Optional
 from warnings import warn
+from weakref import proxy
 
 
 class KeyOverload:
@@ -90,7 +91,7 @@ class OverloadedDict(MutableMapping):
         self.data = data
         self.overloaded = overloaded
         for v in overloaded.values():
-            v.parent = self
+            v.parent = proxy(self)
 
     def __getitem__(self, key):
         if key in self.overloaded:
@@ -146,8 +147,8 @@ def _access_warn(key, cur_loc):
 def _adjacency_getter(ovld: OverloadedDict, key, adata: "AnnData"):
     """For overloading:
 
-    >>> mtx = adata.uns["neighbors"]["connectivities"]
-    >>> mtx = adata.uns["neighbors"]["distances"]
+    >>> mtx = adata.uns["neighbors"]["connectivities"]  # doctest: +SKIP
+    >>> mtx = adata.uns["neighbors"]["distances"]  # doctest: +SKIP
     """
     _access_warn(key, f".obsp[{key}]")
     return adata.obsp[key]
@@ -156,8 +157,8 @@ def _adjacency_getter(ovld: OverloadedDict, key, adata: "AnnData"):
 def _adjacency_setter(ovld: OverloadedDict, key, value, adata: "AnnData"):
     """For overloading:
 
-    >>> adata.uns["neighbors"]["connectivities"] = mtx
-    >>> adata.uns["neighbors"]["distances"] = mtx
+    >>> adata.uns["neighbors"]["connectivities"] = mtx  # doctest: +SKIP
+    >>> adata.uns["neighbors"]["distances"] = mtx  # doctest: +SKIP
     """
     _access_warn(key, f".obsp[{key}]")
     adata.obsp[key] = value

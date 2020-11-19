@@ -4,10 +4,9 @@ Main class and helper functions.
 import warnings
 import collections.abc as cabc
 from collections import OrderedDict
-from copy import deepcopy
-
+from copy import copy, deepcopy
 from enum import Enum
-from functools import reduce, singledispatch
+from functools import partial, singledispatch
 from pathlib import Path
 from os import PathLike
 from typing import Any, Union, Optional  # Meta
@@ -42,7 +41,6 @@ from .views import (
     as_view,
     _resolve_idxs,
 )
-from .merge import merge_uns
 from .sparse_dataset import SparseDataset
 from .. import utils
 from ..utils import convert_to_dict, ensure_df_homogeneous
@@ -138,7 +136,7 @@ class ImplicitModificationWarning(UserWarning):
     Examples
     ========
     >>> import pandas as pd
-    >>> adata = AnnData(obs=pd.DataFrame(index=[0, 1, 2]))
+    >>> adata = AnnData(obs=pd.DataFrame(index=[0, 1, 2]))  # doctest: +SKIP
     ImplicitModificationWarning: Transforming to str index.
     """
 
@@ -365,7 +363,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         self._varp = adata_ref.varp._view(self, vidx)
         # Special case for old neighbors, backwards compat. Remove in anndata 0.8.
         uns_new = _slice_uns_sparse_matrices(
-            adata_ref._uns, self._oidx, adata_ref.n_obs
+            copy(adata_ref._uns), self._oidx, adata_ref.n_obs
         )
         self._n_obs = len(obs_sub)
         self._n_vars = len(var_sub)
@@ -579,10 +577,10 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
     def _gen_repr(self, n_obs, n_vars) -> str:
         if self.isbacked:
-            backed_at = f"backed at {str(self.filename)!r}"
+            backed_at = f" backed at {str(self.filename)!r}"
         else:
             backed_at = ""
-        descr = f"AnnData object with n_obs × n_vars = {n_obs} × {n_vars} {backed_at}"
+        descr = f"AnnData object with n_obs × n_vars = {n_obs} × {n_vars}{backed_at}"
         for attr in [
             "obs",
             "var",
@@ -1308,6 +1306,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         Transpose whole object.
 
         Data matrix is transposed, observations and variables are interchanged.
+
+        Ignores `.raw`.
         """
         if not self.isbacked:
             X = self.X
@@ -1324,11 +1324,14 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
         return AnnData(
             t_csr(X),
-            self._var,
-            self._obs,
-            self._uns,
-            self._varm.flipped(),
-            self._obsm.flipped(),
+            obs=self.var,
+            var=self.obs,
+            # we're taking a private attributes here to be able to modify uns of the original object
+            uns=self._uns,
+            obsm=self.varm.flipped(),
+            varm=self.obsm.flipped(),
+            obsp=self.varp.copy(),
+            varp=self.obsp.copy(),
             filename=self.filename,
             layers={k: t_csr(v) for k, v in self.layers.items()},
             dtype=self.X.dtype.name,
@@ -1336,7 +1339,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
     T = property(transpose)
 
-    def to_df(self) -> pd.DataFrame:
+    def to_df(self, layer=None) -> pd.DataFrame:
         """\
         Generate shallow :class:`~pandas.DataFrame`.
 
@@ -1346,11 +1349,18 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
         * No annotations are maintained in the returned object.
         * The data matrix is densified in case it is sparse.
+
+        Params
+        ------
+        layer : str
+            Key for `.layers`.
         """
-        if issparse(self.X):
-            X = self.X.toarray()
+        if layer is not None:
+            X = self.layers[layer]
         else:
             X = self.X
+        if issparse(X):
+            X = X.toarray()
         return pd.DataFrame(X, index=self.obs_names, columns=self.var_names)
 
     def _get_X(self, use_raw=False, layer=None):
@@ -1526,6 +1536,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         batch_categories: Sequence[Any] = None,
         uns_merge: Optional[str] = None,
         index_unique: Optional[str] = "-",
+        fill_value=None,
     ) -> "AnnData":
         """\
         Concatenate along the observations axis.
@@ -1559,6 +1570,13 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             Make the index unique by joining the existing index names with the
             batch category, using `index_unique='-'`, for instance. Provide
             `None` to keep existing indices.
+        fill_value
+            Scalar value to fill newly missing values in arrays with. Note: only applies to arrays
+            and sparse matrices (not dataframes) and will only be used if `join="outer"`.
+
+            .. note::
+                If not provided, the default value is `0` for sparse matrices and `np.nan`
+                for numpy arrays. See the examples below for more information.
 
         Returns
         -------
@@ -1597,8 +1615,8 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         >>> adata = adata1.concatenate(adata2, adata3)
         >>> adata
         AnnData object with n_obs × n_vars = 6 × 2
-            obs_keys = ['anno1', 'anno2', 'batch']
-            var_keys = ['annoA-0', 'annoA-1', 'annoB-2', 'annoA-2']
+            obs: 'anno1', 'anno2', 'batch'
+            var: 'annoA-0', 'annoA-1', 'annoA-2', 'annoB-2'
         >>> adata.X
         array([[2., 3.],
                [5., 6.],
@@ -1618,52 +1636,55 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                  b  c
         annoA-0  1  2
         annoA-1  2  1
-        annoB-2  2  1
         annoA-2  3  2
+        annoB-2  2  1
 
         Joining on the union of variables.
 
-        >>> adata = adata1.concatenate(adata2, adata3, join='outer')
-        >>> adata
+        >>> outer = adata1.concatenate(adata2, adata3, join='outer')
+        >>> outer
         AnnData object with n_obs × n_vars = 6 × 4
-            obs_keys = ['anno1', 'anno2', 'batch']
-            var_keys = ['annoA-0', 'annoA-1', 'annoB-2', 'annoA-2']
-        >>> adata.var.T
-        index      a    b    c    d
+            obs: 'anno1', 'anno2', 'batch'
+            var: 'annoA-0', 'annoA-1', 'annoA-2', 'annoB-2'
+        >>> outer.var.T
+                   a    b    c    d
         annoA-0  0.0  1.0  2.0  NaN
         annoA-1  NaN  2.0  1.0  0.0
-        annoB-2  NaN  2.0  1.0  0.0
         annoA-2  NaN  3.0  2.0  0.0
-        >>> adata.var_names
+        annoB-2  NaN  2.0  1.0  0.0
+        >>> outer.var_names
         Index(['a', 'b', 'c', 'd'], dtype='object')
-        >>> adata.X
+        >>> outer.X
         array([[ 1.,  2.,  3., nan],
                [ 4.,  5.,  6., nan],
                [nan,  3.,  2.,  1.],
                [nan,  6.,  5.,  4.],
                [nan,  3.,  2.,  1.],
                [nan,  6.,  5.,  4.]], dtype=float32)
-        >>> adata.X.sum(axis=0)
+        >>> outer.X.sum(axis=0)
         array([nan, 25., 23., nan], dtype=float32)
         >>> import pandas as pd
-        >>> Xdf = pd.DataFrame(adata.X, columns=adata.var_names)
-        index    a    b    c    d
-        0      1.0  2.0  3.0  NaN
-        1      4.0  5.0  6.0  NaN
-        2      NaN  3.0  2.0  1.0
-        3      NaN  6.0  5.0  4.0
-        4      NaN  3.0  2.0  1.0
-        5      NaN  6.0  5.0  4.0
+        >>> Xdf = pd.DataFrame(outer.X, columns=outer.var_names)
+        >>> Xdf
+             a    b    c    d
+        0  1.0  2.0  3.0  NaN
+        1  4.0  5.0  6.0  NaN
+        2  NaN  3.0  2.0  1.0
+        3  NaN  6.0  5.0  4.0
+        4  NaN  3.0  2.0  1.0
+        5  NaN  6.0  5.0  4.0
         >>> Xdf.sum()
-        index
         a     5.0
         b    25.0
         c    23.0
         d    10.0
         dtype: float32
+
+        One way to deal with missing values is to use masked arrays:
+
         >>> from numpy import ma
-        >>> adata.X = ma.masked_invalid(adata.X)
-        >>> adata.X
+        >>> outer.X = ma.masked_invalid(outer.X)
+        >>> outer.X
         masked_array(
           data=[[1.0, 2.0, 3.0, --],
                 [4.0, 5.0, 6.0, --],
@@ -1679,15 +1700,15 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 [ True, False, False, False]],
           fill_value=1e+20,
           dtype=float32)
-        >>> adata.X.sum(axis=0).data
+        >>> outer.X.sum(axis=0).data
         array([ 5., 25., 23., 10.], dtype=float32)
 
         The masked array is not saved but has to be reinstantiated after saving.
 
-        >>> adata.write('./test.h5ad')
+        >>> outer.write('./test.h5ad')
         >>> from anndata import read_h5ad
-        >>> adata = read_h5ad('./test.h5ad')
-        >>> adata.X
+        >>> outer = read_h5ad('./test.h5ad')
+        >>> outer.X
         array([[ 1.,  2.,  3., nan],
                [ 4.,  5.,  6., nan],
                [nan,  3.,  2.,  1.],
@@ -1725,235 +1746,60 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                [0., 0., 2., 1.],
                [0., 6., 5., 0.]], dtype=float32)
         """
+        from .merge import concat, merge_outer, merge_dataframes, merge_same
+
         if self.isbacked:
             raise ValueError("Currently, concatenate does only work in memory mode.")
 
-        from scipy.sparse import vstack
-
         if len(adatas) == 0:
-            return self
+            return self.copy()
         elif len(adatas) == 1 and not isinstance(adatas[0], AnnData):
-            # wait with raising this warning until numpy starts raising a similar warning, too
-            # warnings.warn(
-            #     "Trying to treat first argument of `concatenate` as sequence "
-            #     "of AnnDatas. Do `AnnData.concatenate(*adata_list)` instead of "
-            #     "`adata_list[0].concatenate(adata_list[1:])`."
-            # )
             adatas = adatas[0]  # backwards compatibility
         all_adatas = (self,) + tuple(adatas)
 
-        # for controlled behavior, make all variable names unique
-        printed_info = False
-        for i, ad in enumerate(all_adatas):
-            if ad.var_names.is_unique:
-                continue
-            ad.var_names = utils.make_index_unique(ad.var_names)
-            if not printed_info:
-                logger.info(
-                    "Making variable names unique for controlled concatenation."
-                )
-                printed_info = True
-
-        # define variable names of joint AnnData
-        mergers = dict(inner=set.intersection, outer=set.union)
-        var_names_reduce = reduce(
-            mergers[join], (set(ad.var_names) for ad in all_adatas)
+        out = concat(
+            all_adatas,
+            axis=0,
+            join=join,
+            label=batch_key,
+            keys=batch_categories,
+            uns_merge=uns_merge,
+            fill_value=fill_value,
+            index_unique=index_unique,
+            pairwise=False,
         )
-        # restore order of initial var_names, append non-sortable names at the end
-        # see how this was done in the repo at commit state
-        # 40a24f
-        var_names = []
-        for v in all_adatas[0].var_names:
-            if v in var_names_reduce:
-                var_names.append(v)
-                var_names_reduce.remove(v)  # update the set
-        var_names = pd.Index(var_names + list(var_names_reduce))
 
+        ### Backwards compat (some of this could be more efficient)
+        # obs used to always be an outer join
+        out.obs = concat(
+            [AnnData(sparse.csr_matrix(a.shape), obs=a.obs) for a in all_adatas],
+            axis=0,
+            join="outer",
+            label=batch_key,
+            keys=batch_categories,
+            index_unique=index_unique,
+        ).obs
+        # Removing varm
+        del out.varm
+        # Implementing old-style merging of var
         if batch_categories is None:
-            categories = [str(i) for i, _ in enumerate(all_adatas)]
-        elif len(batch_categories) == len(all_adatas):
-            categories = batch_categories
-        else:
-            raise ValueError("Provide as many `batch_categories` as `adatas`.")
-
-        out_shape = (sum(a.n_obs for a in all_adatas), len(var_names))
-
-        sparse_Xs = [a.X for a in all_adatas if issparse(a.X)]
-        if join == "outer":
-            if sparse_Xs:  # not sure whether the lil_matrix is really the best option
-                X = sparse.lil_matrix(out_shape, dtype=self.X.dtype)
-            else:
-                X = np.empty(out_shape, dtype=self.X.dtype)
-                X[:] = np.nan
-        else:
-            Xs = []
-
-        # create layers dict that contains layers shared among all AnnDatas
-        layers = OrderedDict()
-        shared_layers = [
-            key
-            for key in all_adatas[0].layers.keys()
-            if all([key in ad.layers.keys() for ad in all_adatas])
-        ]
-        for key in shared_layers:
-            layers[key] = []
-
-        # create obsm dict that contains obsm keys shared among all AnnDatas
-        obsm = OrderedDict()
-        shared_obsm_keys = [
-            key
-            for key in all_adatas[0].obsm
-            if all([key in ad.obsm for ad in all_adatas])
-        ]
-        for key in shared_obsm_keys:
-            obsm[key] = []
-
-        # check whether tries to do “outer join” and layers is non_empty.
-        if join == "outer" and len(shared_layers) > 0:
-            logger.info(
-                "layers concatenation is not yet available for 'outer' "
-                "intersection and will be ignored."
-            )
-
-        # check whether layers are not consistently set in all AnnData objects.
-        n_layers = np.array([len(ad.layers.keys()) for ad in all_adatas])
-        if join == "inner" and not all(len(shared_layers) == n_layers):
-            logger.info(
-                "layers are inconsistent - only layers that are shared among "
-                "all AnnData objects are included."
-            )
-
-        var = pd.DataFrame(index=var_names)
-
-        if join == "inner":
-            ad_ref = all_adatas[0]
-            cols_intersect = set(ad_ref.var.columns)
-            for ad in all_adatas[1:]:
-                cols_intersect &= set(ad.var.columns)
-                cols_intersect = {
-                    col
-                    for col in cols_intersect
-                    if ad_ref.var.loc[var_names, col].equals(ad.var.loc[var_names, col])
-                }
-                if not cols_intersect:
-                    break
-
-        obs_i = 0  # start of next adata’s observations in X
-        out_obss = []
-        for i, ad in enumerate(all_adatas):
-            if join == "outer":
-                # only names that are actually present in the current AnnData
-                vars_intersect = [v for v in var_names if v in ad.var_names]
-            else:
-                vars_intersect = var_names
-
-            # X
-            if join == "outer":
-                # this is pretty slow, I guess sparse matrices shouldn’t be
-                # constructed like that
-                idx_obs = slice(obs_i, obs_i + ad.n_obs)
-                idx_var = var_names.isin(vars_intersect)
-                X[idx_obs, idx_var] = ad[:, vars_intersect].X
-            else:
-                Xs.append(ad[:, vars_intersect].X)
-            obs_i += ad.n_obs
-
-            # layers
-            if join == "inner":
-                for key in shared_layers:
-                    layers[key].append(ad[:, vars_intersect].layers[key])
-
-            # obsm
-            for key in shared_obsm_keys:
-                obsm[key].append(ad.obsm[key])
-
-            # obs
-            obs = ad.obs.copy()
-            obs[batch_key] = pd.Categorical(ad.n_obs * [categories[i]], categories)
-            if is_string_dtype(all_adatas[0].obs.index) and not is_string_dtype(
-                ad.obs.index
-            ):
-                obs.index = obs.index.astype(str)
-            if index_unique is not None:
-                if not is_string_dtype(ad.obs.index):
-                    obs.index = obs.index.astype(str)
-                obs.index = obs.index.values + index_unique + categories[i]
-            out_obss.append(obs)
-
-            # var
-            for c in ad.var.columns:
-                if join == "inner" and c in cols_intersect:
-                    if c not in var.columns:
-                        var.loc[vars_intersect, c] = ad.var.loc[vars_intersect, c]
-                    continue
-                new_c = (
-                    c
-                    + (index_unique if index_unique is not None else "-")
-                    + categories[i]
-                )
-                var.loc[vars_intersect, new_c] = ad.var.loc[vars_intersect, c]
-
-        if join == "inner":
-
-            X = vstack(Xs) if sparse_Xs else np.concatenate(Xs)
-
-            for key in shared_layers:
-                if any(issparse(a.layers[key]) for a in all_adatas):
-                    layers[key] = vstack(layers[key])
-                else:
-                    layers[key] = np.concatenate(layers[key])
-
-        # obsm
-        for key in shared_obsm_keys:
-            if any(issparse(a.obsm[key]) for a in all_adatas):
-                obsm[key] = vstack(obsm[key])
-            else:
-                obsm[key] = np.concatenate(obsm[key])
-
-        obs = pd.concat(out_obss, sort=True)
-
-        if sparse_Xs:
-            sparse_format = sparse_Xs[0].getformat()
-            X = X.asformat(sparse_format)
-        if join == "inner":
-            for key in shared_layers:
-                sparse_layers = [
-                    a.layers[key] for a in all_adatas if issparse(a.layers[key])
-                ]
-                if sparse_layers:
-                    sparse_format_l = sparse_layers[0].getformat()
-                    layers[key] = layers[key].asformat(sparse_format_l)
-
-        # New uns
-        uns = merge_uns([a.uns for a in all_adatas], uns_merge)
-
-        new_adata = (
-            AnnData(X, obs, var, obsm=obsm, layers=layers, uns=uns)
-            if join == "inner"
-            else AnnData(X, obs, var, obsm=obsm, uns=uns)
+            batch_categories = np.arange(len(all_adatas)).astype(str)
+        pat = rf"-({'|'.join(batch_categories)})$"
+        out.var = merge_dataframes(
+            [a.var for a in all_adatas],
+            out.var_names,
+            partial(merge_outer, batch_keys=batch_categories, merge=merge_same),
         )
+        out.var = out.var.iloc[
+            :,
+            (
+                out.var.columns.str.extract(pat, expand=False)
+                .fillna("")
+                .argsort(kind="stable")
+            ),
+        ]
 
-        # raw
-        have_raw = [_adata.raw is not None for _adata in all_adatas]
-        if all(have_raw):
-            new_adata_raw = AnnData.concatenate(
-                *[_adata.raw.to_adata() for _adata in all_adatas],
-                join=join,
-                batch_key=batch_key,
-                batch_categories=batch_categories,
-                index_unique=index_unique,
-            )
-            new_adata.raw = new_adata_raw
-        elif any(have_raw):
-            warnings.warn(
-                "Only some adata objects have `.raw` attribute, "
-                "not concatenating `.raw` attributes.",
-                UserWarning,
-            )
-
-        if not obs.index.is_unique:
-            logger.info("Or pass `index_unique!=None` to `.concatenate`.")
-        return new_adata
+        return out
 
     def var_names_make_unique(self, join: str = "-"):
         # Important to go through the setter so obsm dataframes are updated too
