@@ -1130,7 +1130,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     def __getitem__(self, index: Index) -> "AnnData":
         """Returns a sliced view of the object."""
         oidx, vidx = self._normalize_indices(index)
-        return self.__class__(self, oidx=oidx, vidx=vidx, asview=True)
+        return AnnData(self, oidx=oidx, vidx=vidx, asview=True)
 
     def _remove_unused_categories(self, df_full, df_sub, uns, inplace=True):
         from pandas.api.types import is_categorical
@@ -1480,7 +1480,12 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                     X = X.reshape(self.shape)
             else:
                 dtype = "float32"
-            return AnnData(
+            if any(is_dask(v) for v in (X, self.obs, self.var, self.uns)):
+                import anndata_dask
+                cls = anndata_dask.AnnDataDask
+            else:
+                cls = AnnData
+            return cls(
                 X=X,
                 obs=self.obs.copy(),
                 var=self.var.copy(),

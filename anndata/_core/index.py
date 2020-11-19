@@ -121,14 +121,15 @@ def _normalize_index(
                 )
             return positions  # np.ndarray[int]
     elif is_dask(indexer):
-
-        return indexer
+        raise NotImplementedError("Dask slicing only supported on AnndataDask subclass")
+        #return indexer
     elif is_dask(index):
         # NOTE: The index is the first arg b/c we are mapping, though _normalize_index
         # expects it to be the 2nd arg.
-        def f(index, indexer):
-            return _normalize_index(indexer, index.values)
-        indexer.map_partitions(f, indexer, meta=index._meta)
+        # def f(index, indexer):
+        #     return _normalize_index(indexer, index.values)
+        # indexer.map_partitions(f, indexer, meta=index._meta)
+        raise NotImplementedError("Dask slicing only supported on AnndataDask subclass")
     else:
         raise IndexError(f"Unknown indexer {indexer!r} of type {type(indexer)}")
 
@@ -154,8 +155,7 @@ def _subset(a: Union[np.ndarray, spmatrix, pd.DataFrame], subset_idx: Index):
 
 @_subset.register(da.Array)
 def _subset_dask_array(a: da.Array, idx: Index):
-    from anndata._io.dask.utils import daskify_call_return_array, daskify_calc_shape, daskify_call
-    from anndata_dask import is_dask
+    from anndata_dask import daskify_call_return_array, daskify_calc_shape, daskify_call, is_dask
     new_shape = daskify_calc_shape(a.shape, idx)
     if any(is_dask(v) for v in new_shape):
         return daskify_call(_subset, a, idx)
@@ -168,7 +168,7 @@ def _subset_dask_array(a: da.Array, idx: Index):
 
 @_subset.register(dask_base.DaskMethodsMixin)
 def _subset_dask_general(a: dask_base.DaskMethodsMixin, subset_idx: Index):
-    from anndata._io.dask.utils import daskify_call
+    from anndata_dask import daskify_call
     return daskify_call(_subset, subset_idx)
 
 @_subset.register(pd.DataFrame)

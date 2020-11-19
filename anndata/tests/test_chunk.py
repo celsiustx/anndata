@@ -1,5 +1,6 @@
 from tempfile import NamedTemporaryFile
 
+import dask
 from h5py import File
 from numpy import array, random
 from numpy.testing import assert_equal
@@ -104,7 +105,7 @@ def test_dask_dataframe_hdf5_load_group():
 
         assert_index_equal(ddf.columns, df.columns)
         assert_frame_equal(ddf.compute(), df)
-        assert ddf.partition_sizes == [100]*10
+        assert ddf.partition_sizes == (100,)*10
 
 
 def test_dask_dataframe_hdf5_load_dataset():
@@ -124,10 +125,12 @@ def test_dask_dataframe_hdf5_load_dataset():
         key = 'df'
         with File(path, 'w') as f:
             f[key] = arr
+        # NOTE: there seems to be a race condition in h5py when using threads here; TODO: repro+file
+        with dask.config.set(scheduler='processes'):
+            ddf = load_dask_dataframe(path=path, key=key, chunk_size=chunk_size, index_col='_index')
 
-        ddf = load_dask_dataframe(path=path, key=key, chunk_size=chunk_size, index_col='_index')
-        assert ddf.index.name == df.index.name
-        assert ddf.index.dtype == df.index.dtype
+            assert ddf.index.name == df.index.name
+            assert ddf.index.dtype == df.index.dtype
 
-        assert_index_equal(ddf.columns, df.columns)
-        assert_frame_equal(ddf.compute(), df)
+            assert_index_equal(ddf.columns, df.columns)
+            assert_frame_equal(ddf.compute(), df)

@@ -80,7 +80,12 @@ def _(l, r):
         r = r.compute()
     if l.index.names == ["_index"] and r.index.names == [None]:
         r.index.names = ["_index"]
-    assert_frame_equal(l, r)
+    from dask.dataframe.utils import assert_eq
+    assert_eq(l, r)
+    # try:
+    #     assert_frame_equal(l, r)
+    # except AssertionError:
+    #     raise AssertionError(f'{l} != {r}')
 
 
 from pandas import Series
