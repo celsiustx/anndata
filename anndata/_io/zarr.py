@@ -251,117 +251,145 @@ def read_zarr(store: Union[str, Path, MutableMapping, zarr.Group], dask: bool = 
         if k.startswith("raw."):
             continue
         if k in {"obs", "var"}:
-            d[k] = read_dataframe(f[k])
+            d[k] = read_dataframe(f[k], dask=dask)
         else:  # Base case
-            d[k] = read_attribute(f[k])
+            d[k] = read_attribute(f[k], dask=dask)
 
     d["raw"] = _read_legacy_raw(f, d.get("raw"), read_dataframe, read_attribute, dask)
 
     _clean_uns(d, dask)
 
-    return AnnData(**d)
+    if dask:
+        from anndata_dask import AnnDataDask
+        return AnnDataDask(**d)
+    else:
+        return AnnData(**d)
 
 
 @singledispatch
-def read_attribute(value):
+def read_attribute(value, dask: bool = False):
     raise NotImplementedError()
 
 
 @read_attribute.register(zarr.Array)
 @report_read_key_on_error
-def read_dataset(dataset: zarr.Array):
-    value = dataset[...]
-    if not hasattr(value, "dtype"):
+def read_dataset(dataset: zarr.Array, dask: bool = False):
+    if dask:
+        import dask.array as da
+        return da.from_zarr(url=dataset.store.path, component=dataset.name)
+    else:
+        value = dataset[...]
+        if not hasattr(value, "dtype"):
+            return value
+        elif isinstance(value.dtype, str):
+            pass
+        elif issubclass(value.dtype.type, np.str_):
+            value = value.astype(object)
+        elif issubclass(value.dtype.type, np.string_):
+            value = value.astype(str).astype(object)  # bytestring -> unicode -> str
+        elif len(value.dtype.descr) > 1:  # Compound dtype
+            # For backwards compat, now strings are written as variable length
+            value = _from_fixed_length_strings(value)
+        if value.shape == ():
+            value = value[()]
         return value
-    elif isinstance(value.dtype, str):
-        pass
-    elif issubclass(value.dtype.type, np.str_):
-        value = value.astype(object)
-    elif issubclass(value.dtype.type, np.string_):
-        value = value.astype(str).astype(object)  # bytestring -> unicode -> str
-    elif len(value.dtype.descr) > 1:  # Compound dtype
-        # For backwards compat, now strings are written as variable length
-        value = _from_fixed_length_strings(value)
-    if value.shape == ():
-        value = value[()]
-    return value
 
 
 @read_attribute.register(zarr.Group)
 @report_read_key_on_error
-def read_group(group: zarr.Group):
+def read_group(group: zarr.Group, dask: bool = False):
     if "encoding-type" in group.attrs:
         enctype = group.attrs["encoding-type"]
         EncodingVersions[enctype].check(group.name, group.attrs["encoding-version"])
         if enctype == "dataframe":
-            return read_dataframe(group)
+            return read_dataframe(group, dask=dask)
         elif enctype == "csr_matrix":
-            return read_csr(group)
+            return read_csr(group, dask=dask)
         elif enctype == "csc_matrix":
-            return read_csc(group)
+            return read_csc(group, dask=dask)
         # At the moment, just treat raw as normal group
-    return {k: read_attribute(group[k]) for k in group.keys()}
+    return {k: read_attribute(group[k], dask=dask) for k in group.keys()}
 
 
 @report_read_key_on_error
-def read_csr(group: zarr.Group) -> sparse.csr_matrix:
-    return sparse.csr_matrix(
-        (group["data"], group["indices"], group["indptr"]), shape=group.attrs["shape"],
-    )
+def read_csr(group: zarr.Group, dask: bool = False) -> sparse.csr_matrix:
+    if dask:
+        raise NotImplementedError
+    else:
+        return sparse.csr_matrix(
+            (group["data"], group["indices"], group["indptr"]), shape=group.attrs["shape"],
+        )
 
 
 @report_read_key_on_error
-def read_csc(group: zarr.Group) -> sparse.csc_matrix:
-    return sparse.csc_matrix(
-        (group["data"], group["indices"], group["indptr"]), shape=group.attrs["shape"],
-    )
+def read_csc(group: zarr.Group, dask: bool = False) -> sparse.csc_matrix:
+    if dask:
+        raise NotImplementedError
+    else:
+        return sparse.csc_matrix(
+            (group["data"], group["indices"], group["indptr"]), shape=group.attrs["shape"],
+        )
 
 
 @report_read_key_on_error
-def read_dataframe_legacy(dataset: zarr.Array) -> pd.DataFrame:
+def read_dataframe_legacy(dataset: zarr.Array, dask: bool = False) -> pd.DataFrame:
     """Reads old format of dataframes"""
     # NOTE: Likely that categoricals need to be removed from uns
-    df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
-    df.set_index(df.columns[0], inplace=True)
+    if dask:
+        from anndata._io.dask.zarr.load_dataframe import load_dask_dataframe
+        df = load_dask_dataframe(dataset=dataset, index_col=lambda df: df.columns[0])
+    else:
+        df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
+        df.set_index(df.columns[0], inplace=True)
     return df
 
 
 @report_read_key_on_error
-def read_dataframe(group) -> pd.DataFrame:
+def read_dataframe(group, dask: bool = False) -> pd.DataFrame:
     if isinstance(group, zarr.Array):
-        return read_dataframe_legacy(group)
+        return read_dataframe_legacy(group, dask=dask)
     columns = list(group.attrs["column-order"])
     idx_key = group.attrs["_index"]
-    df = pd.DataFrame(
-        {k: read_series(group[k]) for k in columns},
-        index=read_series(group[idx_key]),
+    if dask:
+        import dask.dataframe as dd
+        DF = dd.DataFrame
+    else:
+        DF = pd.DataFrame
+
+    df = DF(
+        {k: read_series(group[k], dask=dask) for k in columns},
+        index=read_series(group[idx_key], dask=dask),
         columns=list(columns),
     )
     if idx_key != "_index":
+        # TODO: this doesn't work in Dask, I don't think; dig up workaround for similar situation in HDF5+Dask code
         df.index.name = idx_key
     return df
 
 
 @report_read_key_on_error
-def read_series(dataset: zarr.Array) -> Union[np.ndarray, pd.Categorical]:
-    if "categories" in dataset.attrs:
-        categories = dataset.attrs["categories"]
-        if isinstance(categories, str):
-            categories_key = categories
-            parent_name = dataset.name.rstrip(dataset.basename)
-            parent = zarr.open(dataset.store)[parent_name]
-            categories_dset = parent[categories_key]
-            categories = categories_dset[...]
-            ordered = categories_dset.attrs.get("ordered", False)
-        else:
-            # TODO: remove this code at some point post 0.7
-            # TODO: Add tests for this
-            warn(
-                f"Your file {str(dataset.file.name)!r} has invalid categorical "
-                "encodings due to being written from a development version of "
-                "AnnData. Rewrite the file ensure you can read it in the future.",
-                FutureWarning,
-            )
-        return pd.Categorical.from_codes(dataset[...], categories, ordered=ordered)
+def read_series(dataset: zarr.Array, dask: bool = False) -> Union[np.ndarray, pd.Categorical]:
+    if dask:
+        raise NotImplementedError
     else:
-        return dataset[...]
+        if "categories" in dataset.attrs:
+            categories = dataset.attrs["categories"]
+            if isinstance(categories, str):
+                categories_key = categories
+                parent_name = dataset.name.rstrip(dataset.basename)
+                parent = zarr.open(dataset.store)[parent_name]
+                categories_dset = parent[categories_key]
+                categories = categories_dset[...]
+                ordered = categories_dset.attrs.get("ordered", False)
+            else:
+                # TODO: remove this code at some point post 0.7
+                # TODO: Add tests for this
+                warn(
+                    f"Your file {str(dataset.file.name)!r} has invalid categorical "
+                    "encodings due to being written from a development version of "
+                    "AnnData. Rewrite the file ensure you can read it in the future.",
+                    FutureWarning,
+                )
+            return pd.Categorical.from_codes(dataset[...], categories, ordered=ordered)
+        else:
+            return dataset[...]

@@ -27,7 +27,6 @@ jobs:
           pip uninstall -y scanpy
       - name: Test with pytest
         run: |
-          mv scanpy/ /tmp/ # Remove this when we get the submodule keys configured.
           export PATH=~/.local/bin:$PATH
           export PYTHONPATH=~/.local/lib:.:$PYTHONPATH
           pytest -s -vvv anndata

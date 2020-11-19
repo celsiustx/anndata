@@ -36,7 +36,12 @@ def asarray_h5py_dataset(x):
 
 @singledispatch
 def convert_to_dict(obj) -> dict:
-    return dict(obj)
+    from anndata_dask import is_dask
+    if is_dask(obj):
+        # TODO: warn/remove early compute()
+        return dict(obj.compute())
+    else:
+        return dict(obj)
 
 
 @convert_to_dict.register(dict)
