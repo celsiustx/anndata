@@ -264,11 +264,13 @@ class AnnDataDask(AnnData):
         filemode=None,
         fd=None
     ):
-        AnnData._init_as_actual(self, X, obs, var, uns, obsm, varm, varp, obsp, raw, layers, dtype, shape, filename, filemode, fd)
-        X = load_dask_array(path=self.file.filename, key='X',
-                            chunk_size=(self._n_obs, "auto"),
-                            shape=self.shape)
-        self._X = X
+        if X is None:
+            if self.file is None:
+                raise ValueError("Expected either a filename or X argument!")
+            X = load_dask_array(path=self.file.filename, key='X',
+                                chunk_size=(self._n_obs, "auto"),
+                                format_str='csr', shape=self.shape)
+        super()._init_as_actual(X, obs, var, uns, obsm, varm, varp, obsp, raw, layers, dtype, shape, filename, filemode, fd)
 
     @classmethod
     def slice_df(cls, df, idx: Index):
