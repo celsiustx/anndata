@@ -4,6 +4,11 @@ FROM $BASE
 
 WORKDIR /opt/src
 
+# For local development, swap these lines in for the clone+checkout blocks below
+#COPY . anndata
+#WORKDIR anndata
+#RUN git clean -fdx
+
 # Clone
 RUN git clone --recurse-submodules https://github.com/celsiustx/anndata.git
 WORKDIR anndata
@@ -13,12 +18,14 @@ RUN git remote add -f upstream https://github.com/theislab/anndata.git
 ARG REF=origin/ctx
 RUN git checkout $REF
 
-## Test
+## Build+Test Reqs
 RUN pip install -r requirements.txt \
  && pip install -r requirements_tests.txt
-RUN pytest -v
 
 ## Install
 RUN pip install -e .
+
+RUN pytest -v
+
 
 WORKDIR /

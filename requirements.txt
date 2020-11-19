@@ -1,7 +1,7 @@
 pandas>=1.0,<1.1
 numpy~=1.14
 scipy~=1.0
-h5py
+h5py==2.10.0
 dataclasses
 natsort
 importlib_metadata>=0.7; python_version < '3.8'

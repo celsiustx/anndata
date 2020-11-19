@@ -37,10 +37,10 @@ def get_slice(path, name, start, end, columns, index_col=None):
                 else:
                     return v[start:end]
 
-            df: dd.DataFrame = DF({ k: get_series(k) for k in columns })
+            df: DF = DF({ k: get_series(k) for k in columns })
         else:
             dataset = obj
-            df: dd.DataFrame = DF(dataset[start:end])[columns]
+            df: DF = DF(dataset[start:end])[columns]
 
         if index_col is not None:
             if isinstance(index_col, str):
@@ -137,5 +137,5 @@ def load_dask_dataframe(
     meta = get_slice(path, key, 0, 0, columns=columns, index_col=index_col)
 
     ddf = from_delayed(chunks, meta=meta)
-    ddf.partition_sizes = [ end-start for start, end in chunk_slices ]
+    ddf.partition_sizes = tuple(end-start for start, end in chunk_slices)
     return ddf
