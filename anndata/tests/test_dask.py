@@ -59,8 +59,6 @@ def test_cmp_new_old_h5ad(dask):
     old = load_ad(old_path)
     new = load_ad(new_path)
 
-    print(old.nnz[:20])
-    print(new.nnz[:20])
     assert old.nnz == new.nnz
 
     from pandas.testing import assert_frame_equal
@@ -68,8 +66,6 @@ def test_cmp_new_old_h5ad(dask):
     # old AnnData's set DFs' index.name to "index", new style leaves it None
     old.obs.index.name = None
     old.var.index.name = None
-
-    print(old.obs.index)
 
     if old.obs.index.names == [None] and new.obs.index.names == ["_index"]:
         old.obs.index.names = ["_index"]

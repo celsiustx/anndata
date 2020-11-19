@@ -265,11 +265,9 @@ class AnnDataDask(AnnData):
         fd=None
     ):
         if X is None:
-            if self.file is None:
+            if filename is None:
                 raise ValueError("Expected either a filename or X argument!")
-            X = load_dask_array(path=self.file.filename, key='X',
-                                chunk_size=(self._n_obs, "auto"),
-                                format_str='csr', shape=self.shape)
+            X = load_dask_array(path=filename, key='X',)
         super()._init_as_actual(X, obs, var, uns, obsm, varm, varp, obsp, raw, layers, dtype, shape, filename, filemode, fd)
 
     @classmethod
