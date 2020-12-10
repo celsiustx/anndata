@@ -24,6 +24,7 @@ from numpy import dtype, nan, ndarray
 import pandas as pd
 from pandas.api.types import is_string_dtype
 from scipy import sparse
+from scipy.sparse import csc_matrix, csr_matrix
 
 import dask
 from dask import delayed
@@ -73,7 +74,13 @@ def normalize_slice(idxr, size):
     return m, M, Δ
 
 
-def bools_to_ints(bools: Union[pd.Series, ndarray]):
+@singledispatch
+def bools_to_ints(bools):
+    raise NotImplementedError('Unsupported type %s: %s' % (str(type(bools)), str(bools)))
+
+
+@bools_to_ints.register(pd.Series)
+def _(bools):
     '''Convert a bool-Series to an int-Series representing the indices where True was found.
 
     - reset_index twice to get a column of auto-incrementing ints (the initial index may be e.g. strings)
@@ -89,6 +96,15 @@ def bools_to_ints(bools: Union[pd.Series, ndarray]):
             .set_index(bools.index) \
             [bools]
     return sliced[sliced.columns[0]]
+
+
+@bools_to_ints.register(ndarray)
+def _(bools):
+    if bools.ndim != 1:
+        raise AssertionError('Bool array rank must be 1, found %d: %s' % (bools.ndim, str(bools)))
+    if bools.dtype != dtype(bool):
+        raise AssertionError('Array dtype must be bool, got %s: %s' % (bools.dtype, str(bools)))
+    return np.arange(len(bools))[bools]
 
 
 def maybe_bools_to_ints(slicer):
@@ -142,7 +158,7 @@ def _(idxr, partition_sizes):
 @partition_idxr.register(list)
 @partition_idxr.register(tuple)
 def _(idxr, partition_sizes):
-    '''Break a list of integer indices into sets that can be applied within partitions.
+    '''Break a list of integer indices into lists that can be applied within partitions.
 
     Example:
     - idxr: [2,3,5,8,13,21,34,55]
@@ -188,7 +204,9 @@ def _(idxr, partition_sizes):
         partition_idx_lists[partition_idx] = cur_partition_idxs
 
     return partition_idx_lists
+
 @partition_idxr.register(pd.Series)
+@partition_idxr.register(Series)
 def _(idxr, partition_sizes):
     return partition_idxr(idxr.values, partition_sizes)
 
@@ -206,10 +224,13 @@ def _(idxr, partition_sizes):
             )
         return partition_idxr(bools_to_ints(idxr), partition_sizes)
     else:
-        raise NotImplementedError
+        raise NotImplementedError("Unsupported dtype: %s" % str(idxr.dtype))
 
-@partition_idxr.register(Series)
+@partition_idxr.register(Array)
 def _(idxr, partition_sizes):
+    if idxr.ndim != 1:
+        raise RuntimeError('Can only index using Arrays of rank 1: %s' % str(idxr))
+    chunks = idxr.chunks[0]
     if idxr.dtype == dtype(int):
         # TODO: is this case doable?
         # if not idxr.known_divisions:
@@ -218,15 +239,17 @@ def _(idxr, partition_sizes):
         raise NotImplementedError
     elif idxr.dtype == dtype(bool):
         # TODO: Check that we can ignore None partition_sizes.  Possibly unsafe.
-        if idxr.partition_sizes is not None and idxr.partition_sizes != partition_sizes:
+        if chunks is not None and sum(chunks) != sum(partition_sizes):
             raise ValueError(
-                "Bool dask.dataframe.Series partition_sizes don't match slicee's: %s vs %s; %s" % (
-                    idxr.partition_sizes, partition_sizes, idxr
+                "Bool Dask Array size doesn't match slicee's: %s vs %s (%d vs %d); %s" % (
+                    chunks, partition_sizes, sum(chunks), sum(partition_sizes), idxr
                 )
             )
+        partition_bounds = np.cumsum((0,)+partition_sizes)
+        partition_bounds = zip(partition_bounds, partition_bounds[1:])
         return {
-            idx: idxr.partitions[idx]
-            for idx in range(idxr.npartitions)
+            idx: idxr[start:end]
+            for idx, (start, end) in enumerate(partition_bounds)
         }
     else:
         raise NotImplementedError('%s: %s' % (type(idxr), idxr))
@@ -528,11 +551,19 @@ class AnnDataDask(AnnData):
         virtual = daskify_call(_compute_anndata, self.X, **attribute_value_pairs)
         return virtual
 
-    def compute(self, *args, _debug: bool = False, **kwargs):
+    def compute(self, _debug: bool = False):
+        X = self.X.compute()
+        chunktype = type(self.X._meta)
+        if chunktype is csr_matrix:
+            X = X.tocsr()
+        elif chunktype is csc_matrix:
+            X = X.tocsc()
+        obs = self.obs.compute()
+        var = self.var.compute()
         return AnnData(
-            X=self.X.compute(),
-            obs=self.obs.compute(),
-            var=self.var.compute(),
+            X=X,
+            obs=obs,
+            var=var,
         )
         # virtual = self.to_dask_delayed(*args, _debug=_debug, **kwargs)
         # real = virtual.compute(*args, **kwargs)
