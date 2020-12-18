@@ -34,34 +34,42 @@ def spreadsheet_column(idx):
     return ''.join([ chr(ord('A')+digit) for digit in digits(idx, 26) ])
 
 
-def make_obs(R):
+def make_obs(r, R=None):
+    if R is None:
+        r, R = 0, r
     return DF([
         {
-            'label': f'row {r}',
-            'idx²': r**2,
-            'Prime': r >= 2 and all([
-                r % f != 0
-                for f in range(2, floor(sqrt(r)))
+            'label': f'row {i}',
+            'idx²': i**2,
+            'Prime': i >= 2 and all([
+                i % f != 0
+                for f in range(2, floor(sqrt(i)))
             ]),
         }
-        for r in range(R)
+        for i in range(r, R)
     ])
 
 
-def make_var(C):
+def make_var(c, C=None):
+    if C is None:
+        c, C = 0, c
     return DF([
         {
-            'name': spreadsheet_column(c),
-            'sqrt(idx)': sqrt(c),
+            'name': spreadsheet_column(i),
+            'sqrt(idx)': sqrt(i),
         }
-        for c in range(C)
+        for i in range(c, C)
     ])
 
 
 def make_test_h5ad(R=100, C=200):
-    X = sparse.random(R, C, format="csc", density=0.1, random_state=123)
-    obs = make_obs(R)
-    var = make_var(C)
-
+    if isinstance(R, int): R = (0, R)
+    (r, R) = R
+    if isinstance(C, int): C = (0, C)
+    (c, C) = C
+    M, N = R-r, C-c
+    X = sparse.random(M, N, format="csc", density=0.1, random_state=123)
+    obs = make_obs(r, R)
+    var = make_var(c, C)
     ad = AnnData(X=X, obs=obs, var=var)
     return ad

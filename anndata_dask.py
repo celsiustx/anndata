@@ -15,14 +15,16 @@ from copy import deepcopy
 import functools
 from functools import singledispatch
 from os import PathLike
+from glob import glob
 from typing import Union, Optional  # Meta
-from typing import MutableMapping, Tuple, List  # Generic ABCs
+from typing import MutableMapping, Iterable, Tuple, List  # Generic ABCs
 import warnings
 
 import numpy as np
 from numpy import dtype, nan, ndarray
 import pandas as pd
 from pandas.api.types import is_string_dtype
+from pathlib import Path
 from scipy import sparse
 from scipy.sparse import csc_matrix, csr_matrix
 
@@ -35,6 +37,7 @@ from dask.array import Array
 from dask.array import from_delayed, concatenate
 from dask.array.backends import register_scipy_sparse
 
+import anndata as ad
 from anndata._core.anndata import _gen_dataframe
 from anndata._core.anndata import AnnData, ImplicitModificationWarning
 from anndata._io.dask.hdf5.load_array import load_dask_array
@@ -683,6 +686,46 @@ class AnnDataDask(AnnData):
         return self.__class__(**kw)
 
 
+def read_h5ads(
+    paths: Union[str, Iterable[str], Iterable[Path]],
+    var_check: str = 'len',  # len, compute, union
+) -> AnnDataDask:
+    if isinstance(paths, str):
+        paths = sorted(glob(paths))
+    elif isinstance(paths, Iterable):
+        pass
+    else:
+        raise ValueError('Invalid `paths`: %s' % str(paths))
+
+    ads = [ ad.read_h5ad(path, backed='r', dask=True) for path in paths ]
+    if var_check == 'len':
+        widths = set([ a.shape[1] for a in ads ])
+        if len(widths) > 1:
+            raise Exception('Different n_vars amound %d AnnData: %s' % (len(ads), ','.join([ '(%s: %s)' % (path, str(a.shape)) for a, path in zip(ads, paths) ])))
+        var = ads[0].var
+    elif var_check == 'compute':
+        vars = [ a.var.compute() for a in ads ]
+        first = vars[0]
+        from pandas.testing import assert_frame_equal
+        for i, var in enumerate(vars)[1:]:
+            var = vars[i]
+            assert_frame_equal(first, var)
+        var = first
+    elif var_check == 'union':
+        raise NotImplementedError
+    else:
+        raise ValueError('Invalid `var_check`: %s' % var_check)
+
+    obs = dd.concat([ a.obs for a in ads ], axis=0)
+    #var = dd.concat([ a.var for a in ads ], axis=0)
+    X = da.concatenate([ a.X for a in ads ], axis=0)
+
+    # TODO: Define a way to combine obsm, uns, etc., and verify var/varm.
+
+    a = AnnDataDask(X, obs=obs, var=var)
+    return a
+
+
 @_gen_dataframe.register(DataFrame)
 def _(anno, length, index_names):
     anno = anno.copy()
@@ -821,3 +864,4 @@ def daskify_call_return_df(f: callable, *args, _dask_len=None, _dask_meta=None, 
         meta=_dask_meta,
         verify_meta=True
     )
+

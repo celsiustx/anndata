@@ -2,8 +2,11 @@ import functools
 from dataclasses import dataclass
 from functools import singledispatch
 import inspect
+from numpy import nan
 from numpy.testing import assert_array_equal
+from os.path import join
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Union
 
 import pytest
@@ -32,7 +35,7 @@ def test_cmp_new_old_h5ad(dask):
     R = 100
     C = 200
 
-    ad = make_test_h5ad()
+    ad = make_test_h5ad(R=R, C=C)
 
     def write(path, overwrite=False):
         if path.exists() and overwrite:
@@ -79,6 +82,44 @@ def test_cmp_new_old_h5ad(dask):
     #     path = Path(dir) / 'tmp.h5ad'
     #     ad.write_h5ad(path)
 
+
+def test_read_h5ads():
+    with TemporaryDirectory() as tmpdir:
+        a1_path = join(tmpdir, 'a1.h5ad')
+        a2_path = join(tmpdir, 'a2.h5ad')
+        a1 = make_test_h5ad(100, 200)
+        a2 = make_test_h5ad((100, 300), 200)
+        a1.write_h5ad(a1_path)
+        a2.write_h5ad(a2_path)
+
+        from anndata_dask import read_h5ads
+        add = read_h5ads(join(tmpdir, '*.h5ad'))
+        assert add.shape == (300, 200)
+        assert add.X.shape == (300, 200)
+        assert add.obs.partition_sizes == (100, 200)
+        assert add.var.partition_sizes == (200,)
+        add.obs["row_sums"] = add.X.sum(axis=1).A.flatten()
+
+        add = add[add.obs['row_sums'] > 10]
+        adc = add.compute()
+        R = 145  # ≈half of 300 rows have an above-expected-average sum
+        C = 200
+        assert adc.shape == (R, C)
+
+        from numpy.testing import assert_equal as eq
+        eq(add.X.shape, (nan, C))
+        eq(add.X.chunksize, (nan, C))
+        eq(add.X.chunks, ((nan,)*2, (C,)))
+        eq(adc.X.shape, (R, C))
+
+        assert not add.obs.known_divisions
+        assert add.obs.partition_sizes is None
+
+        from dask.dataframe.utils import assert_eq as df_eq
+        from dask.array.utils import assert_eq as arr_eq
+        arr_eq(add.X, adc.X)
+        df_eq(add.obs, adc.obs)
+        df_eq(add.var, adc.var)
 
 
 @pytest.mark.parametrize('path', [
@@ -197,7 +238,6 @@ def test_dask_load(path):
     # check(lambda ad: ad.obs.loc[:10, 'label'])
 
 
-
 class PreventedMethodCallException(Exception):
     def __init__(self, cls: type, method_name: str,
                  args: Union[list, tuple], kwargs: dict, orig: callable):
@@ -231,24 +271,3 @@ def test_load_without_compute(path):
         with pytest.raises(PreventedMethodCallException):
             ad.obs.compute()
 
-
-def verify_result_index_indexer(result, index, indexer):
-    index_computed = index.compute() if is_dask(index) else index
-    indexer_computed = indexer.compute() if is_dask(indexer) else indexer
-    result_computed_expected = _normalize_index(indexer_computed, index_computed)
-    result_computed = result.compute()
-    mismatch = (result_computed != result_computed_expected)
-    if hasattr(mismatch, "nnz"):
-        assert (mismatch.nnz == 0)
-    elif hasattr(mismatch, "value_counts"):
-        vc = mismatch.value_counts()
-        cnt = vc.get(True, 0)
-        assert (cnt == 0)
-    elif isinstance(mismatch, bool):
-        assert (mismatch == False)
-    else:
-        try:
-            count_true = pd.Series(mismatch).value_counts().get(True, 0)
-            assert (count_true == 0)
-        except Exception as e:
-            assert (mismatch)
