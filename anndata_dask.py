@@ -360,10 +360,17 @@ class AnnDataDask(AnnData):
         for k, v in self2.__dict__.items():
             setattr(self, k, v)
 
+    def __repr__(self) -> str:
+        if self.is_view:
+            return "View of (? x ?) " + self._adata_ref_repr
+        else:
+            return self._gen_repr(self.n_obs, self.n_vars)
+
     def _init_as_view(self, adata_ref: "AnnData", oidx: Index, vidx: Index):
         # NOTE: This method has a large chunk at the beginning and end that is
         # copied from the parent _init_as_view.  Unless we refactor the parent
         # those will need to be kept in sync.
+        self._is_view = True
         obs = self.slice_df(adata_ref.obs, oidx)
         self._obs = obs
         var = self.slice_df(adata_ref.var, vidx)
@@ -430,6 +437,9 @@ class AnnDataDask(AnnData):
 
         # Bunt on uns for now, and get test cases.
         self._uns = adata_ref._uns.copy()
+
+        # For __repr__:
+        self._adata_ref_repr = adata_ref.__repr__()
 
     def _create_axis_arrays(self, axis, vals_raw):
         if is_dask(self.obs) or is_dask(self.var):
