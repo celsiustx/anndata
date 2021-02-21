@@ -1,5 +1,5 @@
 ## Upstream dask image
-ARG BASE=celsiustx/dask:b1e2948a553d60f901a1e475a55dd1566d8eb7e7
+ARG BASE=celsiustx/dask:dc6cc91ab379f4bb7c7ba2e01b75505dd47fb987
 FROM $BASE
 
 WORKDIR /opt/src
