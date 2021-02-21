@@ -4,14 +4,9 @@ FROM $BASE
 
 WORKDIR /opt/src
 
-# Clone
-RUN git clone --recurse-submodules https://github.com/celsiustx/anndata.git
+COPY . anndata
 WORKDIR anndata
-RUN git remote add -f upstream https://github.com/theislab/anndata.git
-
-# Checkout
-ARG REF=origin/ctx
-RUN git checkout $REF
+RUN git clean -fdx
 
 ## Install
 RUN pip install -e .[test] \
