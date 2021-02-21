@@ -1,12 +1,34 @@
 .. role:: small
 .. role:: smaller
 
+On master
+~~~~~~~~~
+
+.. rubric:: Bug fixes
+
+- Fixed bug where `np.str_` column names errored at write time :pr:`457` :smaller:`I Virshup`
+- Fixed "value.index does not match parent’s axis 0/1 names" error triggered when a data frame is stored in obsm/varm after obs_names/var_names is updated :pr:`461` :smaller:`G Eraslan`
+- Fixed `adata.write_csvs` when `adata` is a view :pr:`462` :smaller:`I Virshup`
+
+0.7.5 :small:`2020-11-12`
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. rubric:: Functionality
+
+- Added ipython tab completion and a useful return from `.keys` to `adata.uns` :pr:`415` :smaller:`I Virshup`
+
+.. rubric:: Bug fixes
+
+- Compatibility with `h5py>=3` strings :pr:`444` :smaller:`I Virshup`
+- Allow `adata.raw = None`, as is documented :pr:`447` :smaller:`I Virshup`
+- Fix warnings from pandas 1.1 :pr:`425` :smaller:`I Virshup`
+
 0.7.4 :small:`2020-07-10`
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. rubric:: Concatenation overhaul :pr:`378` :smaller:`I Virshup`
 
-- New function :func:`anndata.concat` used for concatenating `AnnData` objects along either observations or variables
+- New function :func:`anndata.concat` for concatenating `AnnData` objects along either observations or variables
 - New documentation section: :doc:`concatenation`
 
 .. rubric:: Functionality

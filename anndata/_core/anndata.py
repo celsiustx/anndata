@@ -18,9 +18,9 @@ from natsort import natsorted
 import numpy as np
 from numpy import ma
 import pandas as pd
-from pandas.api.types import is_string_dtype, is_categorical
+from pandas.api.types import is_string_dtype, is_categorical_dtype
 from scipy import sparse
-from scipy.sparse import issparse
+from scipy.sparse import issparse, csr_matrix
 
 from .raw import Raw
 from .index import _normalize_indices, _subset, Index, Index1D, get_vector
@@ -567,11 +567,26 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
     def _create_pairwise_arrays(self, axis, vals_raw):
         return PairwiseArrays(self, axis, vals=convert_to_dict(vals_raw))
 
+    def __sizeof__(self, show_stratified=None) -> int:
+        def get_size(X):
+            if issparse(X):
+                X_csr = csr_matrix(X)
+                return X_csr.data.nbytes + X_csr.indptr.nbytes + X_csr.indices.nbytes
+            else:
+                return X.__sizeof__()
 
-    def __sizeof__(self) -> int:
         size = 0
-        for attr in ["_X", "_obs", "_var", "_uns", "_obsm", "_varm"]:
-            s = getattr(self, attr).__sizeof__()
+        attrs = list(["_X", "_obs", "_var"])
+        attrs_multi = list(["_uns", "_obsm", "_varm", "varp", "_obsp", "_layers"])
+        for attr in attrs + attrs_multi:
+            if attr in attrs_multi:
+                keys = getattr(self, attr).keys()
+                s = sum([get_size(getattr(self, attr)[k]) for k in keys])
+            else:
+                s = get_size(getattr(self, attr))
+            if s > 0 and show_stratified:
+                str_attr = attr.replace("_", ".") + " " * (7 - len(attr))
+                print(f"Size of {str_attr}: {'%3.2f' % (s / (1024 ** 2))} MB")
             size += s
         return size
 
@@ -664,20 +679,21 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
     @X.setter
     def X(self, value: Optional[Union[np.ndarray, sparse.spmatrix]]):
+        if value is None:
+            if self.isbacked:
+                raise NotImplementedError(
+                    "Cannot currently remove data matrix from backed object."
+                )
+            if self.is_view:
+                self._init_as_actual(self.copy())
+            self._X = None
+            return
         if not isinstance(value, StorageType.classes()) and not np.isscalar(value):
             if hasattr(value, "to_numpy") and hasattr(value, "dtypes"):
                 value = ensure_df_homogeneous(value, "X")
             else:  # TODO: asarray? asanyarray?
                 value = np.array(value)
-        if value is None:
-            if self.is_view:
-                raise ValueError(
-                    "Copy the view before setting the data matrix to `None`."
-                )
-            if self.isbacked:
-                raise ValueError("Not implemented.")
-            self._X = None
-            return
+
         # If indices are both arrays, we need to modify them
         # so we don’t set values like coordinates
         # This can occur if there are succesive views
@@ -691,9 +707,9 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             oidx, vidx = self._oidx, self._vidx
         if (
             np.isscalar(value)
+            or (hasattr(value, "shape") and (self.shape == value.shape))
             or (self.n_vars == 1 and self.n_obs == len(value))
             or (self.n_obs == 1 and self.n_vars == len(value))
-            or self.shape == value.shape
         ):
             if not np.isscalar(value) and self.shape != value.shape:
                 # For assigning vector of values to 2d array or matrix
@@ -721,6 +737,10 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 f"Data matrix has wrong shape {value.shape}, "
                 f"need to be {self.shape}."
             )
+
+    @X.deleter
+    def X(self):
+        self.X = None
 
     @property
     def layers(self) -> Union[Layers, LayersView]:
@@ -791,14 +811,14 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
 
     @raw.setter
     def raw(self, value: "AnnData"):
-        if not isinstance(value, AnnData):
-            raise ValueError(
-                "Can only init raw attribute with an AnnData object. "
-                "Do `del adata.raw` to delete it"
-            )
-        if self.is_view:
-            self._init_as_actual(self.copy())
-        self._raw = Raw(value)
+        if value is None:
+            del self.raw
+        elif not isinstance(value, AnnData):
+            raise ValueError("Can only init raw attribute with an AnnData object.")
+        else:
+            if self.is_view:
+                self._init_as_actual(self.copy())
+            self._raw = Raw(value)
 
     @raw.deleter
     def raw(self):
@@ -1131,17 +1151,15 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         return AnnData(self, oidx=oidx, vidx=vidx, asview=True)
 
     def _remove_unused_categories(self, df_full, df_sub, uns, inplace=True):
-        from pandas.api.types import is_categorical
-
         if not inplace:
             # Dask requires that we not let this mutate the real object.
             uns = uns.copy()
 
         for k in df_full:
-            if not is_categorical(df_full[k]):
+            if not is_categorical_dtype(df_full[k]):
                 continue
             all_categories = df_full[k].cat.categories
-            df_sub[k].cat.remove_unused_categories(inplace=True)
+            df_sub[k] = df_sub[k].cat.remove_unused_categories()
             # also correct the colors...
             color_key = f"{k}_colors"
             if color_key not in uns:
@@ -1239,7 +1257,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             string_cols = [
                 key
                 for key in df.columns
-                if is_string_dtype(df[key]) and not is_categorical(df[key])
+                if is_string_dtype(df[key]) and not is_categorical_dtype(df[key])
             ]
             for key in string_cols:
                 # make sure we only have strings
@@ -1323,7 +1341,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             return m.T.tocsr() if sparse.isspmatrix_csr(m) else m.T
 
         return AnnData(
-            t_csr(X),
+            X=t_csr(X) if X is not None else None,
             obs=self.var,
             var=self.obs,
             # we're taking a private attributes here to be able to modify uns of the original object
@@ -1334,7 +1352,7 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
             varp=self.obsp.copy(),
             filename=self.filename,
             layers={k: t_csr(v) for k, v in self.layers.items()},
-            dtype=self.X.dtype.name,
+            dtype=self.X.dtype.name if X is not None else "float32",
         )
 
     T = property(transpose)
@@ -1469,6 +1487,42 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
         else:
             return self.raw.var_vector(k)
 
+    def _create_anndata(self, **kwargs):
+        """Creating AnnData with attributes optionally specified via kwargs."""
+        for key in ["obs", "var", "obsm", "varm", "obsp", "varp", "layers"]:
+            kwargs[key] = kwargs.pop(key, getattr(self, key).copy())
+        if "X" not in kwargs:
+            kwargs["X"] = (
+                self.X.to_memory()
+                if self.isbacked and hasattr(self.X, "to_memory")
+                else self.X.copy()
+            )
+        if "uns" not in kwargs:
+            kwargs["uns"] = (
+                self._uns.copy()
+                if isinstance(self.uns, DictView)
+                else deepcopy(self._uns)
+            )
+
+        kwargs["raw"] = kwargs.pop("raw", None)
+        if self.raw is not None:
+            if self.isbacked:
+                warnings.warn("Dropping .raw attribute when loading into memory mode.")
+            else:
+                kwargs["raw"] = self.raw.copy()
+        kwargs["dtype"] = kwargs["X"].dtype
+        return AnnData(**kwargs)
+
+    def to_memory(self) -> "AnnData":
+        """Loading AnnData object into memory."""
+        if not self.isbacked:
+            warnings.warn("Object is already in memory.")
+            adata = self
+        else:
+            adata = self._create_anndata()
+            self.file.close()
+        return adata
+
     def copy(self, filename: Optional[PathLike] = None) -> "AnnData":
         """Full copy, optionally on disk."""
         from anndata_dask import is_dask
@@ -1481,44 +1535,15 @@ class AnnData(metaclass=utils.DeprecationMixinMeta):
                 X = _subset(self._adata_ref.X, (self._oidx, self._vidx)).copy()
             else:
                 X = self.X.copy()
-            # TODO: Figure out what case this is:
-            if X is not None:
-                dtype = X.dtype
-                if (not (X.shape is self.shape)) and (is_dask(X.shape) or is_dask(self.shape)):
-                    raise ValueError("Use the AnnDataDask suclass if the shape is daskified!")
-                elif X.shape != self.shape:
-                    X = X.reshape(self.shape)
-            else:
-                dtype = "float32"
-            if any(is_dask(v) for v in (X, self.obs, self.var, self.uns)):
-                import anndata_dask
-                cls = anndata_dask.AnnDataDask
-            else:
-                cls = AnnData
-            return cls(
-                X=X,
-                obs=self.obs.copy(),
-                var=self.var.copy(),
-                # deepcopy on DictView does not work and is unnecessary
-                # as uns was copied already before
-                uns=self._uns.copy()
-                if isinstance(self.uns, DictView)
-                else deepcopy(self._uns),
-                obsm=self.obsm.copy(),
-                varm=self.varm.copy(),
-                obsp=self.obsp.copy(),
-                varp=self.varp.copy(),
-                raw=self.raw.copy() if self.raw is not None else None,
-                layers=self.layers.copy(),
-                dtype=dtype,
-            )
+            return self._create_anndata(X=X)
         else:
             from .._io import read_h5ad
 
             if filename is None:
                 raise ValueError(
                     "To copy an AnnData object in backed mode, "
-                    "pass a filename: `.copy(filename='myfilename.h5ad')`."
+                    "pass a filename: `.copy(filename='myfilename.h5ad')`. "
+                    "To load the object into memory, use `.to_memory()`."
                 )
             mode = self.file._filemode
             self.write(filename)

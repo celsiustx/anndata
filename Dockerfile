@@ -20,7 +20,6 @@ RUN git checkout $REF
 
 ## Build+Test Reqs
 RUN pip install -r requirements.txt \
- && pip install -r requirements_tests.txt \
  && pip install psycopg2 scanpy
 
 ## Install

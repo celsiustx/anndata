@@ -111,8 +111,8 @@ def test_df_warnings():
 def test_attr_deletion():
     full = gen_adata((30, 30))
     # Empty has just X, obs_names, var_names
-    empty = AnnData(full.X, obs=full.obs[[]], var=full.var[[]])
-    for attr in ["obs", "var", "obsm", "varm", "obsp", "varp", "layers", "uns"]:
+    empty = AnnData(None, obs=full.obs[[]], var=full.var[[]])
+    for attr in ["X", "obs", "var", "obsm", "varm", "obsp", "varp", "layers", "uns"]:
         delattr(full, attr)
         assert_equal(getattr(full, attr), getattr(empty, attr))
     assert_equal(full, empty, exact=True)
@@ -186,6 +186,7 @@ def test_setting_dim_index(dim):
     setattr(curr, index_attr, new_idx)
     pd.testing.assert_index_equal(getattr(curr, index_attr), new_idx)
     pd.testing.assert_index_equal(getattr(curr, mapping_attr)["df"].index, new_idx)
+    pd.testing.assert_index_equal(getattr(curr, mapping_attr).dim_names, new_idx)
     pd.testing.assert_index_equal(curr.obs_names, curr.raw.obs_names)
 
     # Testing view behaviour
@@ -193,11 +194,16 @@ def test_setting_dim_index(dim):
     assert not view.is_view
     pd.testing.assert_index_equal(getattr(view, index_attr), new_idx)
     pd.testing.assert_index_equal(getattr(view, mapping_attr)["df"].index, new_idx)
+    pd.testing.assert_index_equal(getattr(view, mapping_attr).dim_names, new_idx)
     with pytest.raises(AssertionError):
         pd.testing.assert_index_equal(
             getattr(view, index_attr), getattr(orig, index_attr)
         )
     assert_equal(view, curr, exact=True)
+
+    # test case in #459
+    fake_m = pd.DataFrame(curr.X.T, index=getattr(curr, index_attr))
+    getattr(curr, mapping_attr)["df2"] = fake_m
 
 
 def test_indices_dtypes():
@@ -364,21 +370,13 @@ def test_slicing_remove_unused_categories():
 
 def test_get_subset_annotation():
     adata = AnnData(
-        np.array([[1, 2, 3], [4, 5, 6]]), dict(S=["A", "B"]), dict(F=["a", "b", "c"]),
+        np.array([[1, 2, 3], [4, 5, 6]]),
+        dict(S=["A", "B"]),
+        dict(F=["a", "b", "c"]),
     )
 
     assert adata[0, 0].obs["S"].tolist() == ["A"]
     assert adata[0, 0].var["F"].tolist() == ["a"]
-
-
-def test_transpose():
-    adata = gen_adata((5, 3))
-    adata.varp = {f"varp_{k}": v for k, v in adata.varp.items()}
-    adata1 = adata.T
-    adata1.uns["test123"] = 1
-    assert "test123" in adata.uns
-    assert_equal(adata1.X.shape, (3, 5))
-    assert_equal(adata1.obsp.keys(), adata.varp.keys())
 
 
 def test_append_col():

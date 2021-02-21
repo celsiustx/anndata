@@ -1,5 +1,5 @@
 numpy>=1.15
-pandas>=1.0,<1.1
+pandas>=1.0,!=1.1  # pandas 1.1 breaks tests, https://github.com/pandas-dev/pandas/issues/35446
 scipy~=1.0
 h5py==2.10.0
 dataclasses
@@ -7,6 +7,8 @@ natsort
 importlib_metadata>=0.7; python_version < '3.8'
 packaging
 sparse>=0.10.0
+packaging>=20
+xlrd<2.0  # xlsx format not support anymore from v2.0, see pandas/issues/38524
 # TODO: make these belog to an "anndata[dask]" "extra"
 dask[dataframe]
 dask[array]

@@ -45,7 +45,7 @@ def write_csvs(
         varm=adata._varm.to_df(),
     )
     if not skip_data:
-        d["X"] = pd.DataFrame(adata._X.toarray() if issparse(adata._X) else adata._X)
+        d["X"] = pd.DataFrame(adata.X.toarray() if issparse(adata.X) else adata.X)
     d_write = {**d, **adata._uns}
     not_yet_raised_sparse_warning = True
     for key, value in d_write.items():
@@ -67,7 +67,8 @@ def write_csvs(
                 df = pd.DataFrame(value)
             except Exception as e:
                 warnings.warn(
-                    f"Omitting to write {key!r} of type {type(e)}.", WriteWarning,
+                    f"Omitting to write {key!r} of type {type(e)}.",
+                    WriteWarning,
                 )
                 continue
         df.to_csv(

@@ -148,7 +148,8 @@ def test_set_obs(adata, subset_func):
     subset = adata[subset_func(adata.obs_names), :]
 
     new_obs = pd.DataFrame(
-        dict(a=np.ones(subset.n_obs), b=np.ones(subset.n_obs)), index=subset.obs_names,
+        dict(a=np.ones(subset.n_obs), b=np.ones(subset.n_obs)),
+        index=subset.obs_names,
     )
 
     assert subset.is_view
@@ -366,17 +367,20 @@ def test_view_delitem(attr):
 
 
 @pytest.mark.parametrize(
-    "attr", ["obs", "var", "obsm", "varm", "obsp", "varp", "layers"]
+    "attr", ["X", "obs", "var", "obsm", "varm", "obsp", "varp", "layers", "uns"]
 )
-def test_view_delattr(attr):
+def test_view_delattr(attr, subset_func):
     base = gen_adata((10, 10))
-    # Indexing into obs and var just to get indexes
-    subset = base[5:7, :5]
-    empty = ad.AnnData(subset.X, obs=subset.obs[[]], var=subset.var[[]])
+    orig_hash = joblib.hash(base)
+    subset = base[subset_func(base.obs_names), subset_func(base.var_names)]
+    empty = ad.AnnData(obs=subset.obs[[]], var=subset.var[[]])
+
     delattr(subset, attr)
+
     assert not subset.is_view
     # Should now have same value as default
     assert_equal(getattr(subset, attr), getattr(empty, attr))
+    assert orig_hash == joblib.hash(base)  # Original should not be modified
 
 
 @pytest.mark.parametrize(

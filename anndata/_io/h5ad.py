@@ -17,8 +17,15 @@ from .._core.sparse_dataset import SparseDataset
 from .._core.file_backing import AnnDataFileManager
 from .._core.anndata import AnnData
 from .._core.raw import Raw
-from ..compat import _from_fixed_length_strings, _clean_uns, Literal
+from ..compat import (
+    _from_fixed_length_strings,
+    _decode_structured_array,
+    _clean_uns,
+    Literal,
+)
 from .utils import (
+    H5PY_V3,
+    check_key,
     report_read_key_on_error,
     report_write_key_on_error,
     idx_chunks_along_axis,
@@ -27,7 +34,6 @@ from .utils import (
     _read_legacy_raw,
     EncodingVersions,
 )
-
 
 H5Group = Union[h5py.Group, h5py.File]
 H5Dataset = Union[h5py.Dataset]
@@ -165,9 +171,9 @@ def write_none(f, key, value, dataset_kwargs=MappingProxyType({})):
 @report_write_key_on_error
 def write_scalar(f, key, value, dataset_kwargs=MappingProxyType({})):
     # Can’t compress scalars, error is thrown
-    if "compression" in dataset_kwargs:
-        dataset_kwargs = dict(dataset_kwargs)
-        dataset_kwargs.pop("compression")
+    # TODO: Add more terms to filter once they're supported by dataset_kwargs
+    key_filter = {"compression", "compression_opts"}
+    dataset_kwargs = {k: v for k, v in dataset_kwargs.items() if k not in key_filter}
     write_array(f, key, np.array(value), dataset_kwargs=dataset_kwargs)
 
 
@@ -206,7 +212,7 @@ write_csc = partial(write_sparse_compressed, fmt="csc")
 @report_write_key_on_error
 def write_sparse_dataset(f, key, value, dataset_kwargs=MappingProxyType({})):
     write_sparse_compressed(
-        f, key, value.to_backed(), fmt=value.format_str, dataset_kwargs=dataset_kwargs,
+        f, key, value.to_backed(), fmt=value.format_str, dataset_kwargs=dataset_kwargs
     )
 
 
@@ -239,20 +245,24 @@ def write_dataframe(f, key, df, dataset_kwargs=MappingProxyType({})):
     for reserved in ("__categories", "_index"):
         if reserved in df.columns:
             raise ValueError(f"{reserved!r} is a reserved name for dataframe columns.")
-    group = f.create_group(key)
-    group.attrs["encoding-type"] = "dataframe"
-    group.attrs["encoding-version"] = EncodingVersions.dataframe.value
-    group.attrs["column-order"] = list(df.columns)
+
+    col_names = [check_key(c) for c in df.columns]
 
     if df.index.name is not None:
         index_name = df.index.name
     else:
         index_name = "_index"
+    index_name = check_key(index_name)
+
+    group = f.create_group(key)
+    group.attrs["encoding-type"] = "dataframe"
+    group.attrs["encoding-version"] = EncodingVersions.dataframe.value
+    group.attrs["column-order"] = col_names
     group.attrs["_index"] = index_name
 
     write_series(group, index_name, df.index, dataset_kwargs=dataset_kwargs)
-    for colname, series in df.items():
-        write_series(group, colname, series, dataset_kwargs=dataset_kwargs)
+    for col_name, (_, series) in zip(col_names, df.items()):
+        write_series(group, col_name, series, dataset_kwargs=dataset_kwargs)
 
 
 @report_write_key_on_error
@@ -406,7 +416,7 @@ def read_h5ad(
             )
 
     rdasp = partial(
-        read_dense_as_sparse, sparse_format=as_sparse_fmt, axis_chunk=chunk_size,
+        read_dense_as_sparse, sparse_format=as_sparse_fmt, axis_chunk=chunk_size
     )
 
     f = h5py.File(filename, "r")
@@ -477,7 +487,14 @@ def read_dataframe_legacy(dataset, dask: bool = False) -> pd.DataFrame:
         from .dask.hdf5.load_dataframe import load_dask_dataframe
         df = load_dask_dataframe(dataset=dataset, index_col=lambda df: df.columns[0])
     else:
-        df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
+        if H5PY_V3:
+            df = pd.DataFrame(
+                _decode_structured_array(
+                    _from_fixed_length_strings(dataset[()]), dtype=dataset.dtype
+                )
+            )
+        else:
+            df = pd.DataFrame(_from_fixed_length_strings(dataset[()]))
         df.set_index(df.columns[0], inplace=True)
     return df
 
@@ -517,7 +534,7 @@ def read_series(dataset) -> Union[np.ndarray, pd.Categorical]:
         categories = dataset.attrs["categories"]
         if isinstance(categories, h5py.Reference):
             categories_dset = dataset.parent[dataset.attrs["categories"]]
-            categories = categories_dset[...]
+            categories = read_dataset(categories_dset)
             ordered = bool(categories_dset.attrs.get("ordered", False))
         else:
             # TODO: remove this code at some point post 0.7
@@ -528,9 +545,11 @@ def read_series(dataset) -> Union[np.ndarray, pd.Categorical]:
                 "AnnData. Rewrite the file ensure you can read it in the future.",
                 FutureWarning,
             )
-        return pd.Categorical.from_codes(dataset[...], categories, ordered=ordered)
+        return pd.Categorical.from_codes(
+            read_dataset(dataset), categories, ordered=ordered
+        )
     else:
-        return dataset[...]
+        return read_dataset(dataset)
 
 
 # @report_read_key_on_error
@@ -568,6 +587,10 @@ def read_group(group: h5py.Group, dask=False) -> Union[dict, pd.DataFrame, spars
 @report_read_key_on_error
 def read_dataset(dataset: h5py.Dataset, dask=False):
     # TODO: dask
+    if H5PY_V3:
+        string_dtype = h5py.check_string_dtype(dataset.dtype)
+        if (string_dtype is not None) and (string_dtype.encoding == "utf-8"):
+            dataset = dataset.asstr()
     value = dataset[()]
     if not hasattr(value, "dtype"):
         return value
@@ -580,7 +603,10 @@ def read_dataset(dataset: h5py.Dataset, dask=False):
             return value[0]
     elif len(value.dtype.descr) > 1:  # Compound dtype
         # For backwards compat, now strings are written as variable length
+        dtype = value.dtype
         value = _from_fixed_length_strings(value)
+        if H5PY_V3:
+            value = _decode_structured_array(value, dtype=dtype)
     if value.shape == ():
         value = value[()]
     return value

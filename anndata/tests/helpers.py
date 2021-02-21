@@ -68,9 +68,9 @@ def gen_adata(
     X_dtype=np.float32,
     # obs_dtypes,
     # var_dtypes,
-    obsm_types: "Collection[Type]" = (sparse.csr_matrix, np.ndarray, pd.DataFrame,),
-    varm_types: "Collection[Type]" = (sparse.csr_matrix, np.ndarray, pd.DataFrame,),
-    layers_types: "Collection[Type]" = (sparse.csr_matrix, np.ndarray, pd.DataFrame,),
+    obsm_types: "Collection[Type]" = (sparse.csr_matrix, np.ndarray, pd.DataFrame),
+    varm_types: "Collection[Type]" = (sparse.csr_matrix, np.ndarray, pd.DataFrame),
+    layers_types: "Collection[Type]" = (sparse.csr_matrix, np.ndarray, pd.DataFrame),
 ) -> AnnData:
     """\
     Helper function to generate a random AnnData for testing purposes.
@@ -104,6 +104,10 @@ def gen_adata(
     obs.rename(columns=dict(cat="obs_cat"), inplace=True)
     var.rename(columns=dict(cat="var_cat"), inplace=True)
 
+    if X_type is None:
+        X = None
+    else:
+        X = X_type(np.random.binomial(100, 0.005, (M, N)).astype(X_dtype))
     obsm = dict(
         array=np.random.random((M, 50)),
         sparse=sparse.random(M, 100, format="csr"),
@@ -128,10 +132,16 @@ def gen_adata(
     )
     uns = dict(
         O_recarray=gen_vstr_recarray(N, 5),
+        nested=dict(
+            scalar_str="str",
+            scalar_int=42,
+            scalar_float=3.0,
+            nested_further=dict(array=np.arange(5)),
+        ),
         # U_recarray=gen_vstr_recarray(N, 5, "U4")
     )
     adata = AnnData(
-        X=X_type(np.random.binomial(100, 0.005, (M, N)).astype(X_dtype)),
+        X=X,
         obs=obs,
         var=var,
         obsm=obsm,
@@ -333,7 +343,7 @@ def assert_equal_aligned_mapping(a, b, exact=False, elem_name=None):
     b_indices = (b.parent.obs_names, b.parent.var_names)
     for axis_idx in a.axes:
         assert_equal(
-            a_indices[axis_idx], b_indices[axis_idx], exact=exact, elem_name=axis_idx,
+            a_indices[axis_idx], b_indices[axis_idx], exact=exact, elem_name=axis_idx
         )
     assert a.attrname == b.attrname, format_msg(elem_name)
     assert_equal_mapping(a, b, exact=exact, elem_name=elem_name)
@@ -343,7 +353,7 @@ def assert_equal_aligned_mapping(a, b, exact=False, elem_name=None):
 def assert_equal_index(a, b, exact=False, elem_name=None):
     if not exact:
         report_name(pd.testing.assert_index_equal)(
-            a, b, check_names=False, check_categorical=False, _elem_name=elem_name,
+            a, b, check_names=False, check_categorical=False, _elem_name=elem_name
         )
     else:
         report_name(pd.testing.assert_index_equal)(a, b, _elem_name=elem_name)

@@ -1,0 +1,72 @@
+trigger:
+- master
+
+variables:
+  RUN_COVERAGE: no
+
+jobs:
+- job: PyTest
+  pool:
+    vmImage: 'ubuntu-18.04'
+  strategy:
+    matrix:
+      Python37:
+        python.version: '3.7'
+        RUN_COVERAGE: yes
+      Python36:
+        python.version: '3.6'
+  steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '$(python.version)'
+    displayName: 'Use Python $(python.version)'
+
+  - script: |
+      python -m pip install --upgrade pip
+      pip install pytest-cov wheel
+      pip install .[dev,test]
+    displayName: 'Install dependencies'
+
+  - script: |
+      pytest --color=yes --junitxml=junit/test-results.xml
+    displayName: 'PyTest'
+    condition: eq(variables['RUN_COVERAGE'], 'no')
+
+  - script: |
+      pytest --color=yes --junitxml=junit/test-results.xml --cov --cov-report=xml --cov-context=test
+    displayName: 'PyTest (coverage)'
+    condition: eq(variables['RUN_COVERAGE'], 'yes')
+
+  - task: PublishCodeCoverageResults@1
+    inputs:
+      codeCoverageTool: Cobertura
+      summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.xml'
+      reportDirectory: '$(System.DefaultWorkingDirectory)/**/htmlcov'
+    condition: eq(variables['RUN_COVERAGE'], 'yes')
+
+  - task: PublishTestResults@2
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFiles: 'junit/test-*.xml'
+      testRunTitle: 'Publish test results for Python $(python.version)'
+
+  - script: bash <(curl -s https://codecov.io/bash)
+    displayName: 'Upload to codecov.io'
+
+- job: static_analysis
+  pool:
+    vmImage: 'ubuntu-18.04'
+  steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.8'
+    displayName: 'Use Python 3.8'
+
+  - script: pip install 'black>=20.8b1' docutils
+    displayName: 'Install dependencies'
+
+  - script: black . --check --diff
+    displayName: 'black'
+
+  - script: rst2html.py --halt=2 README.rst >/dev/null
+    displayName: 'rst2html'
