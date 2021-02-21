@@ -1,3 +1,5 @@
+.azure-pipelines.yml
+.codecov.yml
 .editorconfig
 .gitmodules
 Dockerfile
@@ -8,13 +10,11 @@ anndata_dask.py
 new.h5ad
 old.h5ad
 pyproject.toml
-pytest.ini
 requirements.txt
-requirements_tests.txt
-setup.cfg
 setup.py
 .github/workflows/test.yml
 anndata/__init__.py
+anndata/_metadata.py
 anndata/core.py
 anndata/diff.py
 anndata/logging.py
@@ -76,9 +76,11 @@ anndata/tests/test_obspvarp.py
 anndata/tests/test_raw.py
 anndata/tests/test_readwrite.py
 anndata/tests/test_repr.py
+anndata/tests/test_transpose.py
 anndata/tests/test_uns.py
 anndata/tests/test_utils.py
 anndata/tests/test_views.py
+anndata/tests/test_x.py
 anndata/tests/data/excel.xlsx
 anndata/tests/utils/__init__.py
 anndata/tests/utils/data.py
