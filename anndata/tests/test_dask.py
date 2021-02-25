@@ -20,8 +20,11 @@ from .._core.sparse_dataset import SparseDataset
 from anndata._core.index import _normalize_index
 from anndata_dask import is_dask
 import pandas as pd
+import dask
+
 
 package_root = Path(anndata.__file__).parent.parent
+
 new_path = package_root / 'new.h5ad'
 old_path = package_root / 'old.h5ad'  # written by running `make_test_h5ad` in AnnData 0.6.22
 assert (new_path.exists())
@@ -120,6 +123,19 @@ def test_read_h5ads():
         arr_eq(add.X, adc.X)
         df_eq(add.obs, adc.obs)
         df_eq(add.var, adc.var)
+
+
+def test_load_array_chunks():
+    path = new_path
+    with dask.config.set({'h5ad.chunks': (-1, 20)}):
+        ad = read_h5ad(path, backed='r', dask=True)
+        assert ad.X.chunks == ((100,), (20,) * 10)
+    with dask.config.set({'h5ad.chunks': (10, 20)}):
+        ad = read_h5ad(path, backed='r', dask=True)
+        assert ad.X.chunks == ((10,) * 10, (20,) * 10)
+    with dask.config.set({'h5ad.chunks': '1KiB'}):
+        ad = read_h5ad(path, backed='r', dask=True)
+        assert ad.X.chunks == ((10,) * 10, (10,) * 20)
 
 
 @pytest.mark.parametrize('path', [

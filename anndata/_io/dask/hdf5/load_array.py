@@ -8,6 +8,7 @@ try:
 except ImportError:
     from contextlib import suppress as nullcontext
 
+import dask
 from dask.array import Array, from_array
 from dask.array.core import normalize_chunks
 from functools import partial, singledispatch
@@ -80,7 +81,7 @@ def load_dask_array(
     *,
     X=None,
     path=None, key=None,
-    chunk_size='auto',
+    chunk_size=None,
     to_array=sparse_hdf5_group_to_backed_dataset,
     **to_array_kwargs
 ) -> Array:
@@ -120,6 +121,8 @@ def load_dask_array(
         meta = None
 
     #print(f'Loading HDF5 tensor: {path}:{name}: {X}')
+
+    chunk_size = chunk_size or dask.config.get('h5ad.chunks', 'auto')
 
     with ctx:
         chunks = normalize_chunks(chunk_size, X.shape, dtype = X.dtype)
